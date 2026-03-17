@@ -2,6 +2,28 @@
 
 本章在第二章"批处理系统"的基础上，实现了一个**多道程序操作系统**（tg-rcore-tutorial-ch3）。它支持多个用户程序同时驻留在内存中并发执行，通过时钟中断实现**抢占式调度**，通过 `yield` 系统调用支持**协作式调度**，并引入了时间管理功能。
 
+## 学生提交信息
+
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-T1L3`
+- crate 版本：`0.0.1-preview.1`
+- 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
+- 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-ch3`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-T1L3-v0.0.1-preview.1`
+
+复现方式：
+
+```bash
+cargo clone rosist-sallina-tg-rcore-tutorial-T1L3
+cd rosist-sallina-tg-rcore-tutorial-T1L3
+cargo run --features exercise
+```
+
+```bash
+git clone https://github.com/Rosist-Sallina/tg-rcore-tutorial.git
+cd tg-rcore-tutorial/tg-rcore-tutorial-ch3
+cargo run --features exercise
+```
+
 通过本章的学习和实践，你将理解：
 
 - 什么是多道程序系统，它与批处理系统有何区别
