@@ -18,6 +18,10 @@
 use tg_kernel_context::LocalContext;
 use tg_syscall::{Caller, SyscallId};
 
+const EMPTY_SYSCALL_ID: usize = usize::MAX;
+const SYSCALL_TRACE_CAPACITY: usize = 8;
+const EMPTY_SYSCALL_TRACE: (usize, usize) = (EMPTY_SYSCALL_ID, 0);
+
 /// 任务控制块（Task Control Block, TCB）
 ///
 /// 每个用户程序对应一个 TCB，包含：
@@ -29,6 +33,8 @@ pub struct TaskControlBlock {
     ctx: LocalContext,
     /// 任务完成标志：true 表示已退出或被杀死
     pub finish: bool,
+    
+    syscall_trace: [(usize, usize); SYSCALL_TRACE_CAPACITY],
     /// 用户栈：8 KiB（1024 个 usize = 1024 × 8 = 8192 字节）
     /// 每个任务拥有独立的栈空间，避免栈溢出影响其他任务
     stack: [usize; 1024],
@@ -54,6 +60,7 @@ impl TaskControlBlock {
     pub const ZERO: Self = Self {
         ctx: LocalContext::empty(),
         finish: false,
+        syscall_trace: [EMPTY_SYSCALL_TRACE; SYSCALL_TRACE_CAPACITY],
         stack: [0; 1024],
     };
 
@@ -65,6 +72,7 @@ impl TaskControlBlock {
     pub fn init(&mut self, entry: usize) {
         self.stack.fill(0);
         self.finish = false;
+        self.syscall_trace.fill(EMPTY_SYSCALL_TRACE);
         self.ctx = LocalContext::user(entry);
         // 栈从高地址向低地址增长，所以 sp 指向栈顶（数组末尾之后的地址）
         *self.ctx.sp_mut() = self.stack.as_ptr() as usize + core::mem::size_of_val(&self.stack);
@@ -88,7 +96,7 @@ impl TaskControlBlock {
         use SchedulingEvent as Event;
 
         // a7 寄存器存放 syscall ID
-        let id = self.ctx.a(7).into();
+        let id: Id = self.ctx.a(7).into();
         // a0-a5 寄存器存放系统调用参数
         let args = [
             self.ctx.a(0),
@@ -98,6 +106,14 @@ impl TaskControlBlock {
             self.ctx.a(4),
             self.ctx.a(5),
         ];
+        self.record_syscall(id.0);
+
+        if id == Id::TRACE {
+            *self.ctx.a_mut(0) = self.handle_trace(args[0], args[1], args[2]) as _;
+            self.ctx.move_next(); // sepc += 4，跳过 ecall 指令
+            return Event::None;
+        }
+
         match tg_syscall::handle(Caller { entity: 0, flow: 0 }, id, args) {
             Ret::Done(ret) => match id {
                 // exit 系统调用：返回退出事件
@@ -117,6 +133,38 @@ impl TaskControlBlock {
             },
             // 不支持的系统调用
             Ret::Unsupported(_) => Event::UnsupportedSyscall(id),
+        }
+    }
+
+    fn record_syscall(&mut self, id: usize) {
+        for slot in &mut self.syscall_trace {
+            if slot.0 == id {
+                slot.1 += 1;
+                return;
+            }
+            if slot.0 == EMPTY_SYSCALL_ID {
+                *slot = (id, 1);
+                return;
+            }
+        }
+    }
+
+    fn query_syscall_count(&self, id: usize) -> usize {
+        self.syscall_trace
+            .iter()
+            .find_map(|&(slot_id, count)| (slot_id == id).then_some(count))
+            .unwrap_or(0)
+    }
+
+    fn handle_trace(&mut self, trace_request: usize, id: usize, data: usize) -> isize {
+        match trace_request {
+            0 => unsafe { core::ptr::read(id as *const u8) as isize },
+            1 => {
+                unsafe { core::ptr::write(id as *mut u8, data as u8) };
+                0
+            }
+            2 => self.query_syscall_count(id) as isize,
+            _ => -1,
         }
     }
 }
