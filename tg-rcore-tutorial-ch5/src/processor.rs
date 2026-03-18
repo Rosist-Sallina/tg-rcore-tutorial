@@ -100,6 +100,8 @@ impl Manage<Process, ProcId> for ProcManager {
     }
 }
 
+const BIG_STRIDE: usize = 1 << 20;
+
 /// 实现 Schedule trait：进程调度（当前为 FIFO/RR）
 impl Schedule<ProcId> for ProcManager {
     /// 将进程加入就绪队列尾部
@@ -107,8 +109,19 @@ impl Schedule<ProcId> for ProcManager {
         self.ready_queue.push_back(id);
     }
 
-    /// 从就绪队列头部取出下一个要执行的进程
+    /// 找到stride最小的进程，并从就绪队列中取出返回其 PID
     fn fetch(&mut self) -> Option<ProcId> {
-        self.ready_queue.pop_front()
+        let idx = self.ready_queue
+          .iter()
+          .enumerate()
+          .min_by_key(|&(_, &id)| self.tasks.get(&id).unwrap().stride)
+          .map(|(idx, _)| idx)?;
+
+      let id = self.ready_queue.remove(idx).unwrap();
+      let proc = self.tasks.get_mut(&id).unwrap();
+      let pass = BIG_STRIDE / proc.priority;
+      proc.stride = proc.stride.wrapping_add(pass);
+
+      Some(id)
     }
 }

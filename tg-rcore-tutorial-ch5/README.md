@@ -2,6 +2,28 @@
 
 本章在第四章"地址空间"的基础上，引入了完整的 **进程管理** 机制，实现了 `fork`、`exec`、`waitpid` 等核心系统调用。进程是操作系统中最重要的抽象之一——它将"运行中的程序"封装为一个可管理的实体，使得用户可以动态创建、终止、等待进程，并通过 Shell 与操作系统交互。
 
+## 学生提交信息
+
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-T1L3`
+- crate 版本：`0.0.1-preview.2`
+- 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
+- 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-ch5`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-T1L3-v0.0.1-preview.2`
+
+复现方式：
+
+```bash
+cargo clone rosist-sallina-tg-rcore-tutorial-T1L3
+cd rosist-sallina-tg-rcore-tutorial-T1L3
+cargo run --features exercise
+```
+
+```bash
+git clone https://github.com/Rosist-Sallina/tg-rcore-tutorial.git
+cd tg-rcore-tutorial/tg-rcore-tutorial-ch5
+cargo run --features exercise
+```
+
 通过本章的学习和实践，你将理解：
 
 - 什么是进程，进程与任务的区别

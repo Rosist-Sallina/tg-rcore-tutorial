@@ -644,13 +644,35 @@ mod impls {
         /// 无需复制父进程地址空间。
         ///
         /// TODO: 实现 spawn 系统调用（练习题）
-        fn spawn(&self, _caller: Caller, _path: usize, _count: usize) -> isize {
-            let current = PROCESSOR.get_mut().current().unwrap();
-            tg_console::log::info!(
-                "spawn: parent pid = {}, not implemented",
-                current.pid.get_usize()
-            );
-            -1
+        fn spawn(&self, _caller: Caller, path: usize, count: usize) -> isize {
+            const READABLE: VmFlags<Sv39> = build_flags("RV");
+            let spawned = {
+                let current = PROCESSOR.get_mut().current().unwrap();
+                let parent_pid = current.pid; // 保存父进程 PID
+
+                current
+                    .address_space
+                    .translate(VAddr::new(path), READABLE)
+                    .map(|ptr| unsafe {core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr.as_ptr(),count))})
+                    .and_then(|name| APPS.get(name))
+                    .and_then(|input| ElfFile::new(input).ok())
+                    .and_then(ProcStruct::from_elf)
+                    .map(|child| (parent_pid, child))
+            };
+
+            spawned.map_or_else(
+                || {
+                    log::error!("unknown app, select one in the list: ");
+                        APPS.keys().for_each(|app| println!("{app}"));
+                        println!();
+                        -1
+                    },
+                |(parent_pid, child)| {
+                    let pid = child.pid;
+                    PROCESSOR.get_mut().add(pid, child, parent_pid);
+                    pid.get_usize() as isize
+                },
+            )
         }
 
         /// sbrk 系统调用：调整进程堆空间大小
@@ -681,11 +703,10 @@ mod impls {
         /// TODO: 实现 set_priority 系统调用（练习题：stride 调度算法）
         fn set_priority(&self, _caller: Caller, prio: isize) -> isize {
             let current = PROCESSOR.get_mut().current().unwrap();
-            tg_console::log::info!(
-                "set_priority: pid = {}, prio = {}, not implemented",
-                current.pid.get_usize(),
-                prio
-            );
+            if prio >= 2{
+                current.priority = prio as usize;
+                return prio;
+            }
             -1
         }
     }
@@ -739,18 +760,24 @@ mod impls {
             _fd: i32,
             _offset: usize,
         ) -> isize {
-            tg_console::log::info!(
-                "mmap: addr = {addr:#x}, len = {len}, prot = {prot}, not implemented"
-            );
-            -1
+            PROCESSOR
+                .get_mut()
+                .current()
+                .and_then(|process| process.mmap_anonymous(addr, len, prot))
+                .map(|()| 0)
+                .unwrap_or(-1)
         }
 
         /// munmap 系统调用：取消内存映射
         ///
         /// TODO: 实现 munmap 系统调用（练习题）
         fn munmap(&self, _caller: Caller, addr: usize, len: usize) -> isize {
-            tg_console::log::info!("munmap: addr = {addr:#x}, len = {len}, not implemented");
-            -1
+            PROCESSOR
+                .get_mut()
+                .current()
+                .and_then(|process| process.munmap_anonymous(addr, len))
+                .map(|()| 0)
+                .unwrap_or(-1)
         }
     }
 }

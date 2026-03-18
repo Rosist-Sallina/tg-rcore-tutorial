@@ -286,3 +286,174 @@ cargo run --features exercise
 - 如果它出现在本来应该正常读写的映射里：那才说明你的实现错了
 
 也就是说，这个异常本身不一定是 bug，关键要看它出现在什么测试场景里。
+
+## ch5
+
+**用户：**
+
+我正在学习操作系统课程，请帮助我做ch5的exercise内容（不要直接给我完成，可以给我完成的框架和指导）
+
+**AI：**
+
+老哥，这次 `ch5 exercise` 的核心不是一整章重做，而是把题目拆成 3 块：
+
+1. `ch4` 的 `mmap/munmap` 前向兼容迁进来  
+2. 实现 `spawn`  
+3. 实现 `stride + set_priority`
+
+推荐顺序也是这 3 步。因为 `mmap/munmap` 最像复制迁移题，最适合先做；`spawn` 做通以后，后面 `stride` 的测例才能真正跑起来。
+
+**用户：**
+
+那你先给我一个完整框架，不要直接给结果。
+
+**AI：**
+
+可以，按文件和职责来拆。
+
+### 第 1 步：先补前向兼容
+
+这部分最适合直接沿用 `ch4` 的思路，但不是简单把 syscall 代码粘到 `main.rs`，而是：
+- 在 `Process` 里补 `checked_vpn_range`
+- 在 `Process` 里补 `mmap_anonymous`
+- 在 `Process` 里补 `munmap_anonymous`
+- 在 syscall 层把 `mmap/munmap` 转发到当前进程
+
+也就是说：
+- `main.rs` 只负责取当前进程和做返回值映射
+- 真正页范围检查和映射逻辑仍然沉到 `Process`
+
+### 第 2 步：再做 `spawn`
+
+`spawn` 最适合直接复用 `exec` 的前半段链路：
+- 路径翻译
+- 程序名查表
+- `ElfFile::new`
+
+但最后一步不是替换当前进程，而是：
+- `Process::from_elf(...)`
+- 然后把新进程塞进 `PROCESSOR.add(child.pid, child, parent_pid)`
+
+### 第 3 步：最后做 `stride + set_priority`
+
+`set_priority` 本质很简单：
+- `prio >= 2` 就更新并返回新优先级
+- 否则返回 `-1`
+
+真正要想清楚的是 `stride` 更新时机。  
+它不该在 `add()` 里，不该在 `spawn()` 里，也不该在 `set_priority()` 里。  
+最合适的位置是 `fetch()`，也就是“真的选中下一个要跑的进程”这一刻。
+
+**用户：**
+
+你先帮我把前向兼容做了，这一部分就是复制粘贴吧
+
+**AI：**
+
+行，这块我先直接帮你补，但只补 `mmap/munmap` 前向兼容，不混进 `spawn/stride`。
+
+我的落点会是：
+- [process.rs](/Users/sallinarosist/OS/tg-rcore-tutorial/tg-rcore-tutorial-ch5/src/process.rs)
+- [main.rs](/Users/sallinarosist/OS/tg-rcore-tutorial/tg-rcore-tutorial-ch5/src/main.rs)
+
+基本策略就是把 `ch4` 里匿名映射那套逻辑搬进 `ch5` 的进程模型里，只适配字段和常量，不重新发明一版。
+
+**AI：**
+
+前向兼容这块已经补好了。
+
+我做了两层验证：
+- `cargo build --features exercise` 通过
+- 实际运行里，`ch4_mmap`、`ch4_unmap`、`ch4_unmap2` 都过了
+
+所以现在 `mmap/munmap` 这部分已经不是阻塞点了。后面真正剩下的是 `spawn` 和 `set_priority/stride`。
+
+**用户：**
+
+在 `tg-rcore-tutorial-ch5/src/main.rs:641` 实现 `spawn`，直接复用 `exec` 的“路径翻译 -> 名字查表 -> ElfFile::new”链路，但最后不是替换当前进程，而是 `Process::from_elf` 新建子进程并 `PROCESSOR.add(child.pid, child, parent_pid)`。这里怎么搞
+
+**AI：**
+
+`spawn` 这题本身不难，真正容易卡的是借用顺序。
+
+推荐写法是：
+- 先在一个内层作用域里完成“解析 path + 构造 child + 取出 parent_pid”
+- 让这段逻辑返回 `Option<(parent_pid, child)>`
+- 等这个内层作用域结束后，再调用 `PROCESSOR.add(...)`
+
+这样就不会出现“还拿着当前进程的可变借用，又去可变借用整个 processor”的冲突。
+
+换句话说，这题的重点不是 syscall 语义，而是：
+- 先把当前进程里需要的值拎出来
+- 尽快释放 `current()` 的借用
+- 最后再 add 子进程
+
+**用户：**
+
+`you can add the dyn keyword if you want a trait object`，在 `.and_then(Process::from_elf)` 这里是咋回事？
+
+**AI：**
+
+这不是 `.and_then` 的问题，是 `Process` 这个名字冲突了。
+
+你当前文件里同时有：
+- 你自己的结构体 `crate::process::Process`
+- syscall trait `tg_syscall::Process`
+
+所以你写：
+
+```rust
+.and_then(Process::from_elf)
+```
+
+编译器可能把 `Process` 优先理解成 trait，于是才冒出那个 `dyn` 提示。
+
+处理方式很简单：
+- 改成你结构体的别名
+- 或者写全路径
+
+本质结论就一句：  
+这里错的不是 `from_elf`，而是名字解析到了 trait，不是结构体。
+
+**用户：**
+
+在哪里更新 `stride` 比较合适啊
+
+**AI：**
+
+放在 `fetch()` 里最合适。
+
+因为：
+- `stride` 表示“这个进程已经被分到过多少 CPU 份额”
+- 只有在“它这次真的被选中执行”时，才应该给它加 `pass`
+
+所以顺序应该是：
+1. 在 runnable 集合里挑 `stride` 最小的
+2. 把它从队列里拿出来
+3. 给它做 `stride += BIG_STRIDE / priority`
+4. 返回这个 pid
+
+不要放在这些地方：
+- `add()`：这里只是重新入队，不代表它已经获得了一次运行机会
+- `set_priority()`：这里只改优先级，不该顺手算一次调度
+- `spawn()` / `fork()`：新进程应该初始化为 `stride = 0`
+
+**用户：**
+
+帮我看一下现在的实现和差什么
+
+**AI：**
+
+我按 code review + 真跑测试的方式看过了，结论很明确：
+
+- `spawn` 这版已经通了
+- `mmap/munmap` 前向兼容已经通了
+- 当前真正卡住 exercise 的，只剩 `set_priority`
+
+也就是说这时候你的 `stride` 框架基本已经立住了，但没有 `set_priority`，测试里的优先级变化根本没真正生效。
+
+另外我还提醒了你一个语义风险：
+- `exec` 不应该顺手把 `priority/stride` 重置成默认值
+
+因为 `exec` 是“同一个进程换镜像”，不是“创建新进程”。  
+这个点未必马上炸 visible tests，但属于比较像样的语义坑。

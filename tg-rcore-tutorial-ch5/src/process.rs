@@ -50,9 +50,16 @@ pub struct Process {
     pub heap_bottom: usize,
     /// 当前程序 break 位置（堆顶），通过 sbrk 调整
     pub program_brk: usize,
+
+    pub priority: usize,
+
+    pub stride: usize,
 }
 
 impl Process {
+    const PAGE_SIZE: usize = 1 << Sv39::PAGE_BITS;
+    const PAGE_MASK: usize = Self::PAGE_SIZE - 1;
+
     /// exec 系统调用的核心实现：用新程序替换当前进程
     ///
     /// 替换地址空间和上下文，但保留 PID。
@@ -89,6 +96,8 @@ impl Process {
             address_space,
             heap_bottom: self.heap_bottom,
             program_brk: self.program_brk,
+            priority: 16,
+            stride: 0,
         })
     }
 
@@ -113,9 +122,6 @@ impl Process {
             _ => None?,
         };
 
-        const PAGE_SIZE: usize = 1 << Sv39::PAGE_BITS; // 4 KiB
-        const PAGE_MASK: usize = PAGE_SIZE - 1;
-
         let mut address_space = AddressSpace::new();
         let mut max_end_va: usize = 0;
 
@@ -129,7 +135,7 @@ impl Process {
             let len_file = program.file_size() as usize;  // 文件中的数据长度
             let off_mem = program.virtual_addr() as usize; // 虚拟地址起始
             let end_mem = off_mem + program.mem_size() as usize; // 虚拟地址结束
-            assert_eq!(off_file & PAGE_MASK, off_mem & PAGE_MASK);
+            assert_eq!(off_file & Self::PAGE_MASK, off_mem & Self::PAGE_MASK);
 
             // 记录最高虚拟地址（用于确定堆底位置）
             if end_mem > max_end_va {
@@ -154,7 +160,7 @@ impl Process {
             address_space.map(
                 VAddr::new(off_mem).floor()..VAddr::new(end_mem).ceil(),
                 &elf.input[off_file..][..len_file],
-                off_mem & PAGE_MASK,
+                off_mem & Self::PAGE_MASK,
                 parse_flags(unsafe { core::str::from_utf8_unchecked(&flags) }).unwrap(),
             );
         }
@@ -192,6 +198,8 @@ impl Process {
             address_space,
             heap_bottom,
             program_brk: heap_bottom,
+            priority: 16,
+            stride: 0,
         })
     }
 
@@ -229,5 +237,87 @@ impl Process {
 
         self.program_brk = new_brk;
         Some(old_brk)
+    }
+
+    fn checked_vpn_range(
+        &self,
+        addr: usize,
+        len: usize,
+    ) -> Option<core::ops::Range<VPN<Sv39>>> {
+        if addr & Self::PAGE_MASK != 0 {
+            return None;
+        }
+        let end = addr.checked_add(len)?;
+        Some(VAddr::new(addr).floor()..VAddr::new(end).ceil())
+    }
+
+    pub fn mmap_anonymous(&mut self, addr: usize, len: usize, prot: i32) -> Option<()> {
+        if addr & Self::PAGE_MASK != 0 || prot & !0x7 != 0 || prot & 0x7 == 0 {
+            return None;
+        }
+
+        let vpn_range = self.checked_vpn_range(addr, len)?;
+        let start = vpn_range.start;
+        let end = vpn_range.end;
+        if start == end {
+            return Some(());
+        }
+
+        let valid = build_flags("V");
+        let mut vpn = start;
+        while vpn < end {
+            if self
+                .address_space
+                .translate::<u8>(vpn.base(), valid)
+                .is_some()
+            {
+                return None;
+            }
+            vpn = vpn + 1;
+        }
+
+        let mut flags: [u8; 5] = *b"U___V";
+        if prot & 0b100 != 0 {
+            flags[1] = b'X';
+        }
+        if prot & 0b010 != 0 {
+            flags[2] = b'W';
+        }
+        if prot & 0b001 != 0 {
+            flags[3] = b'R';
+        }
+
+        self.address_space.map(
+            start..end,
+            &[],
+            0,
+            parse_flags(unsafe { core::str::from_utf8_unchecked(&flags) }).ok()?,
+        );
+        Some(())
+    }
+
+    pub fn munmap_anonymous(&mut self, addr: usize, len: usize) -> Option<()> {
+        let vpn_range = self.checked_vpn_range(addr, len)?;
+        let start = vpn_range.start;
+        let end = vpn_range.end;
+        if start == end {
+            return Some(());
+        }
+
+        let valid = build_flags("V");
+        let mut vpn = start;
+        while vpn < end {
+            if self
+                .address_space
+                .translate::<u8>(vpn.base(), valid)
+                .is_none()
+            {
+                return None;
+            }
+            vpn = vpn + 1;
+        }
+
+        self.address_space.unmap(start..end);
+        Some(())
     }
 }
