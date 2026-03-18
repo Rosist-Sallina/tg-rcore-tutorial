@@ -1,12 +1,12 @@
 [package]
-name = "rosist-sallina-tg-rcore-tutorial-T1L4"
+name = "rosist-sallina-tg-rcore-tutorial-T1L2"
 description = "Student AI4OSE lab crate for Chapter 4 of rCore Tutorial: Address space management with SV39 virtual memory."
 version = "0.0.1-preview.1"
 edition = "2024"
 authors = ["Rosist_Sallina <sallinarosist@gmail.com>"]
 repository = "https://github.com/Rosist-Sallina/tg-rcore-tutorial"
 homepage = "https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-ch4"
-documentation = "https://docs.rs/rosist-sallina-tg-rcore-tutorial-T1L4"
+documentation = "https://docs.rs/rosist-sallina-tg-rcore-tutorial-T1L2"
 license = "GPL-3.0"
 readme = "README.md"
 keywords = ["ai", "ai4ose", "kernel", "learning", "os"]
