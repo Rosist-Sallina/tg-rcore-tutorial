@@ -2,6 +2,28 @@
 
 本章在第三章"多道程序与分时多任务"的基础上，引入了 **RISC-V Sv39 虚拟内存机制**，为每个用户进程提供**独立的地址空间**（tg-rcore-tutorial-ch4）。这是操作系统实现**进程隔离**和**内存保护**的关键一步。
 
+## 学生提交信息
+
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-T1L4`
+- crate 版本：`0.0.1-preview.1`
+- 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
+- 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-ch4`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-T1L4-v0.0.1-preview.1`
+
+复现方式：
+
+```bash
+cargo clone rosist-sallina-tg-rcore-tutorial-T1L4
+cd rosist-sallina-tg-rcore-tutorial-T1L4
+cargo run --features exercise
+```
+
+```bash
+git clone https://github.com/Rosist-Sallina/tg-rcore-tutorial.git
+cd tg-rcore-tutorial/tg-rcore-tutorial-ch4
+cargo run --features exercise
+```
+
 通过本章的学习和实践，你将理解：
 
 - 什么是虚拟内存，为什么需要地址空间隔离
