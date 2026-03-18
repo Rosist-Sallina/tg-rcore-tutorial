@@ -19,18 +19,19 @@
 //! - 再看 `change_program_brk`：理解 sbrk 对页映射范围的影响；
 //! - 最后结合 `ch4/src/main.rs`：对齐“进程对象创建”和“调度执行”两条路径。
 
-use crate::{build_flags, parse_flags, Sv39, Sv39Manager};
+use crate::{Sv39, Sv39Manager, build_flags, parse_flags};
 use alloc::alloc::alloc_zeroed;
-use core::alloc::Layout;
+use core::{alloc::Layout, ops::Range};
 use tg_console::log;
-use tg_kernel_context::{foreign::ForeignContext, LocalContext};
+use tg_kernel_context::{LocalContext, foreign::ForeignContext};
 use tg_kernel_vm::{
-    page_table::{MmuMeta, VAddr, PPN, VPN},
     AddressSpace,
+    page_table::{MmuMeta, PPN, VAddr, VPN},
 };
 use xmas_elf::{
+    ElfFile,
     header::{self, HeaderPt2, Machine},
-    program, ElfFile,
+    program,
 };
 
 /// 进程结构体
@@ -40,6 +41,12 @@ use xmas_elf::{
 /// - `address_space`：Sv39 地址空间，管理该进程的页表
 /// - `heap_bottom`：堆底地址（ELF 加载的最高地址的下一页）
 /// - `program_brk`：当前堆顶地址（通过 sbrk 调整）
+const EMPTY_SYSCALL_ID: usize = usize::MAX;
+const SYSCALL_TRACE_CAPACITY: usize = 8;
+const EMPTY_SYSCALL_TRACE: (usize, usize) = (EMPTY_SYSCALL_ID, 0);
+const PAGE_SIZE: usize = 1 << Sv39::PAGE_BITS;
+const PAGE_MASK: usize = PAGE_SIZE - 1;
+
 pub struct Process {
     /// 用户态上下文（含 satp，支持跨地址空间的 Trap 切换）
     pub context: ForeignContext,
@@ -49,6 +56,7 @@ pub struct Process {
     pub heap_bottom: usize,
     /// 当前程序 break 位置（堆顶）
     pub program_brk: usize,
+    syscall_trace: [(usize, usize); SYSCALL_TRACE_CAPACITY],
 }
 
 impl Process {
@@ -71,9 +79,6 @@ impl Process {
             }
             _ => None?,
         };
-
-        const PAGE_SIZE: usize = 1 << Sv39::PAGE_BITS;
-        const PAGE_MASK: usize = PAGE_SIZE - 1;
 
         let mut address_space = AddressSpace::new();
         let mut max_end_va: usize = 0;
@@ -150,6 +155,7 @@ impl Process {
             address_space,
             heap_bottom,
             program_brk: heap_bottom,
+            syscall_trace: [EMPTY_SYSCALL_TRACE; SYSCALL_TRACE_CAPACITY],
         })
     }
 
@@ -186,5 +192,103 @@ impl Process {
 
         self.program_brk = new_brk;
         Some(old_brk)
+    }
+
+    pub fn record_syscall(&mut self, id: usize) {
+        for slot in &mut self.syscall_trace {
+            if slot.0 == id {
+                slot.1 += 1;
+                return;
+            }
+            if slot.0 == EMPTY_SYSCALL_ID {
+                *slot = (id, 1);
+                return;
+            }
+        }
+    }
+
+    pub fn query_syscall_count(&self, id: usize) -> usize {
+        self.syscall_trace
+            .iter()
+            .find_map(|&(slot_id, count)| (slot_id == id).then_some(count))
+            .unwrap_or(0)
+    }
+
+    fn checked_vpn_range(&self, addr: usize, len: usize) -> Option<Range<VPN<Sv39>>> {
+        if addr & PAGE_MASK != 0 {
+            return None;
+        }
+        let end = addr.checked_add(len)?;
+        Some(VAddr::new(addr).floor()..VAddr::new(end).ceil())
+    }
+
+    pub fn mmap_anonymous(&mut self, addr: usize, len: usize, prot: i32) -> Option<()> {
+        if addr & PAGE_MASK != 0 || prot & !0x7 != 0 || prot & 0x7 == 0 {
+            return None;
+        }
+
+        let vpn_range = self.checked_vpn_range(addr, len)?;
+        let start = vpn_range.start;
+        let end = vpn_range.end;
+        if start == end {
+            return Some(());
+        }
+
+        let valid = build_flags("V");
+        let mut vpn = start;
+        while vpn < end {
+            if self
+                .address_space
+                .translate::<u8>(vpn.base(), valid)
+                .is_some()
+            {
+                return None;
+            }
+            vpn = vpn + 1;
+        }
+
+        let mut flags: [u8; 5] = *b"U___V";
+        if prot & 0b100 != 0 {
+            flags[1] = b'X';
+        }
+        if prot & 0b010 != 0 {
+            flags[2] = b'W';
+        }
+        if prot & 0b001 != 0 {
+            flags[3] = b'R';
+        }
+
+        self.address_space.map(
+            start..end,
+            &[],
+            0,
+            parse_flags(unsafe { core::str::from_utf8_unchecked(&flags) }).ok()?,
+        );
+        Some(())
+    }
+
+    pub fn munmap_anonymous(&mut self, addr: usize, len: usize) -> Option<()> {
+        let vpn_range = self.checked_vpn_range(addr, len)?;
+        let start = vpn_range.start;
+        let end = vpn_range.end;
+        if start == end {
+            return Some(());
+        }
+
+        let valid = build_flags("V");
+        let mut vpn = start;
+        while vpn < end {
+            if self
+                .address_space
+                .translate::<u8>(vpn.base(), valid)
+                .is_none()
+            {
+                return None;
+            }
+            vpn = vpn + 1;
+        }
+
+        self.address_space.unmap(start..end);
+        Some(())
     }
 }

@@ -52,13 +52,13 @@ use riscv::register::*;
 use stub::Sv39;
 use tg_console::log;
 // 异界传送门：解决跨地址空间上下文切换的核心组件
-use tg_kernel_context::{foreign::MultislotPortal, LocalContext};
+use tg_kernel_context::{LocalContext, foreign::MultislotPortal};
 // RISC-V64 使用真正的 Sv39 类型
 #[cfg(target_arch = "riscv64")]
 use tg_kernel_vm::page_table::Sv39;
 use tg_kernel_vm::{
-    page_table::{MmuMeta, VAddr, VmFlags, VmMeta, PPN, VPN},
     AddressSpace,
+    page_table::{MmuMeta, PPN, VAddr, VPN, VmFlags, VmMeta},
 };
 use tg_sbi;
 use tg_syscall::Caller;
@@ -232,13 +232,13 @@ extern "C" fn schedule() -> ! {
 
     // 调度循环：持续执行直到所有进程完成
     while !unsafe { PROCESSES.get_mut().is_empty() } {
-        let ctx = unsafe { &mut PROCESSES.get_mut()[0].context };
+        let process = unsafe { &mut PROCESSES.get_mut()[0] };
         // 通过传送门执行用户进程：
         // 1. 跳转到传送门页面
         // 2. 在传送门内切换 satp 到用户地址空间
         // 3. 恢复用户寄存器，执行 sret 进入 U-mode
         // 4. 用户触发 Trap 后，传送门切换回内核地址空间
-        unsafe { ctx.execute(portal, ()) };
+        unsafe { process.context.execute(portal, ()) };
 
         // 处理 Trap
         match scause::read().cause() {
@@ -246,9 +246,15 @@ extern "C" fn schedule() -> ! {
             scause::Trap::Exception(scause::Exception::UserEnvCall) => {
                 use tg_syscall::{SyscallId as Id, SyscallResult as Ret};
 
-                let ctx = &mut ctx.context;
-                let id: Id = ctx.a(7).into();
-                let args = [ctx.a(0), ctx.a(1), ctx.a(2), ctx.a(3), ctx.a(4), ctx.a(5)];
+                let (id, args) = {
+                    let process = unsafe { &mut PROCESSES.get_mut()[0] };
+                    let ctx = &process.context.context;
+                    (
+                        Id::from(ctx.a(7)),
+                        [ctx.a(0), ctx.a(1), ctx.a(2), ctx.a(3), ctx.a(4), ctx.a(5)],
+                    )
+                };
+                unsafe { PROCESSES.get_mut()[0].record_syscall(id.0) };
                 match tg_syscall::handle(Caller { entity: 0, flow: 0 }, id, args) {
                     Ret::Done(ret) => match id {
                         // exit：移除进程
@@ -257,6 +263,8 @@ extern "C" fn schedule() -> ! {
                         },
                         // 其他系统调用：写回返回值，sepc += 4
                         _ => {
+                            let process = unsafe { &mut PROCESSES.get_mut()[0] };
+                            let ctx = &mut process.context.context;
                             *ctx.a_mut(0) = ret as _;
                             ctx.move_next();
                         }
@@ -270,10 +278,11 @@ extern "C" fn schedule() -> ! {
             }
             // ─── 其他异常/中断：杀死进程 ───
             e => {
+                let sepc = unsafe { PROCESSES.get_mut()[0].context.context.pc() };
                 log::error!(
                     "unsupported trap: {e:?}, stval = {:#x}, sepc = {:#x}",
                     stval::read(),
-                    ctx.context.pc()
+                    sepc
                 );
                 unsafe { PROCESSES.get_mut().remove(0) };
             }
@@ -311,8 +320,8 @@ fn kernel_space(
         log::info!("{region}");
         use tg_linker::KernelRegionTitle::*;
         let flags = match region.title {
-            Text => "X_RV",    // 代码段：可执行、可读
-            Rodata => "__RV",  // 只读数据段：只读
+            Text => "X_RV",        // 代码段：可执行、可读
+            Rodata => "__RV",      // 只读数据段：只读
             Data | Boot => "_WRV", // 数据段/启动段：可读写
         };
         let s = VAddr::<Sv39>::new(region.range.start);
@@ -356,13 +365,13 @@ fn kernel_space(
 /// 与前几章不同，本章的系统调用实现需要进行**地址翻译**：
 /// 用户传入的指针是虚拟地址，内核需要通过页表将其翻译为物理地址才能访问。
 mod impls {
-    use crate::{build_flags, Sv39, PROCESSES};
+    use crate::{PROCESSES, Sv39, build_flags};
     use alloc::alloc::alloc_zeroed;
     use core::{alloc::Layout, ptr::NonNull};
     use tg_console::log;
     use tg_kernel_vm::{
-        page_table::{MmuMeta, Pte, VAddr, VmFlags, PPN, VPN},
         PageManager,
+        page_table::{MmuMeta, PPN, Pte, VAddr, VPN, VmFlags},
     };
     use tg_syscall::*;
 
@@ -563,15 +572,34 @@ mod impls {
     /// - 使用 translate() 方法进行地址翻译和权限检查
     impl Trace for SyscallContext {
         #[inline]
-        fn trace(
-            &self,
-            _caller: Caller,
-            _trace_request: usize,
-            _id: usize,
-            _data: usize,
-        ) -> isize {
-            tg_console::log::info!("trace: not implemented");
-            -1
+        fn trace(&self, caller: Caller, trace_request: usize, id: usize, data: usize) -> isize {
+            const USER_READABLE: VmFlags<Sv39> = build_flags("U_RV");
+            const USER_WRITABLE: VmFlags<Sv39> = build_flags("U_WV");
+
+            let Some(process) = unsafe { PROCESSES.get_mut() }.get_mut(caller.entity) else {
+                return -1;
+            };
+
+            match trace_request {
+                0 => process
+                    .address_space
+                    .translate::<u8>(VAddr::new(id), USER_READABLE)
+                    .map(|ptr| unsafe { *ptr.as_ptr() } as isize)
+                    .unwrap_or(-1),
+                1 => {
+                    if let Some(mut ptr) = process
+                        .address_space
+                        .translate::<u8>(VAddr::new(id), USER_WRITABLE)
+                    {
+                        *unsafe { ptr.as_mut() } = data as u8;
+                        0
+                    } else {
+                        -1
+                    }
+                }
+                2 => process.query_syscall_count(id) as isize,
+                _ => -1,
+            }
         }
     }
 
@@ -582,7 +610,7 @@ mod impls {
     impl Memory for SyscallContext {
         fn mmap(
             &self,
-            _caller: Caller,
+            caller: Caller,
             addr: usize,
             len: usize,
             prot: i32,
@@ -590,15 +618,19 @@ mod impls {
             _fd: i32,
             _offset: usize,
         ) -> isize {
-            tg_console::log::info!(
-                "mmap: addr = {addr:#x}, len = {len}, prot = {prot}, not implemented"
-            );
-            -1
+            unsafe { PROCESSES.get_mut() }
+                .get_mut(caller.entity)
+                .and_then(|process| process.mmap_anonymous(addr, len, prot))
+                .map(|()| 0)
+                .unwrap_or(-1)
         }
 
-        fn munmap(&self, _caller: Caller, addr: usize, len: usize) -> isize {
-            tg_console::log::info!("munmap: addr = {addr:#x}, len = {len}, not implemented");
-            -1
+        fn munmap(&self, caller: Caller, addr: usize, len: usize) -> isize {
+            unsafe { PROCESSES.get_mut() }
+                .get_mut(caller.entity)
+                .and_then(|process| process.munmap_anonymous(addr, len))
+                .map(|()| 0)
+                .unwrap_or(-1)
         }
     }
 }
