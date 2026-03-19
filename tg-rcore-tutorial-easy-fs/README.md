@@ -1,5 +1,15 @@
 # tg-rcore-tutorial-easy-fs
 
+## 学生提交信息
+
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-easy-fs-t1l4`
+- crate 版本：`0.0.1-preview.2`
+- 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
+- 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-easy-fs`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-easy-fs-t1l4-v0.0.1-preview.2`
+
+这个 crate 是 `ch6` 学生版实验 crate 的配套依赖，主要补了硬链接与 inode 回收相关能力。
+
 A simple filesystem implementation for the rCore tutorial operating system.
 
 ## 设计目标

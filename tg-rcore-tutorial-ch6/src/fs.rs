@@ -82,14 +82,20 @@ impl FSManager for FileSystem {
         Some(self.root.readdir())
     }
 
-    /// 创建硬链接（TODO 练习题）
-    fn link(&self, _src: &str, _dst: &str) -> isize {
-        unimplemented!()
+    /// 创建硬链接
+    fn link(&self, src: &str, dst: &str) -> isize {
+        if src == dst {
+            return -1;
+        }
+        let Some(inode) = self.find(src) else {
+            return -1;
+        };
+        self.root.create_hard_link(dst, &inode)
     }
 
-    /// 删除硬链接（TODO 练习题）
-    fn unlink(&self, _path: &str) -> isize {
-        unimplemented!()
+    /// 删除硬链接
+    fn unlink(&self, path: &str) -> isize {
+        self.root.unlink_child(path)
     }
 }
 

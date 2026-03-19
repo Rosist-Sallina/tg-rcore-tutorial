@@ -12,6 +12,7 @@ pub struct Inode {
     block_offset: usize,
     fs: Arc<Mutex<EasyFileSystem>>,
     block_device: Arc<dyn BlockDevice>,
+    inode_id: u32,
 }
 
 impl Inode {
@@ -21,12 +22,14 @@ impl Inode {
         block_offset: usize,
         fs: Arc<Mutex<EasyFileSystem>>,
         block_device: Arc<dyn BlockDevice>,
+        inode_id: u32,
     ) -> Self {
         Self {
             block_id: block_id as usize,
             block_offset,
             fs,
             block_device,
+            inode_id
         }
     }
 
@@ -74,6 +77,7 @@ impl Inode {
                     block_offset,
                     self.fs.clone(),
                     self.block_device.clone(),
+                    inode_id,
                 ))
             })
         })
@@ -96,6 +100,17 @@ impl Inode {
             v.push(fs.alloc_data());
         }
         disk_inode.increase_size(new_size, v, &self.block_device);
+    }
+
+    fn clear_locked(&self, fs: &mut MutexGuard<EasyFileSystem>) {
+        self.modify_disk_inode(|disk_inode| {
+            let size = disk_inode.size;
+            let data_blocks_dealloc = disk_inode.clear_size(&self.block_device);
+            assert!(data_blocks_dealloc.len() == DiskInode::total_blocks(size) as usize);
+            for data_block in data_blocks_dealloc.into_iter() {
+                fs.dealloc_data(data_block);
+            }
+        });
     }
 
     /// Create inode under current inode by name.
@@ -135,8 +150,118 @@ impl Inode {
             block_offset,
             self.fs.clone(),
             self.block_device.clone(),
+            new_inode_id,
         )))
         // release efs lock automatically by compiler
+    }
+
+    /// 获取 inode 的元数据。
+    pub fn stat(&self) -> (u32, bool, u32) {
+        self.read_disk_inode(|disk_inode| (self.inode_id, disk_inode.is_dir(), disk_inode.nlink))
+    }
+
+    /// 在当前目录下为 inode 创建一个硬链接。
+    pub fn create_hard_link(&self, name: &str, inode: &Arc<Inode>) -> isize {
+        if inode.read_disk_inode(|disk_inode| disk_inode.is_dir()) {
+            return -1;
+        }
+
+        let mut fs = self.fs.lock();
+        let target_inode_id = inode.inode_id;
+        let inserted = self.modify_disk_inode(|root_inode| {
+            if !root_inode.is_dir() || self.find_inode_id(name, root_inode).is_some() {
+                return false;
+            }
+
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let new_size = (file_count + 1) * DIRENT_SZ;
+            self.increase_size(new_size as u32, root_inode, &mut fs);
+            let dirent = DirEntry::new(name, target_inode_id);
+            assert_eq!(
+                root_inode.write_at(file_count * DIRENT_SZ, dirent.as_bytes(), &self.block_device),
+                DIRENT_SZ,
+            );
+            true
+        });
+        if !inserted {
+            return -1;
+        }
+
+        let (block_id, block_offset) = fs.get_disk_inode_pos(target_inode_id);
+        get_block_cache(block_id as usize, Arc::clone(&self.block_device))
+            .lock()
+            .modify(block_offset, |disk_inode: &mut DiskInode| {
+                disk_inode.nlink += 1;
+            });
+        block_cache_sync_all();
+        0
+    }
+
+    /// 从当前目录下删除一个目录项。
+    ///
+    /// 当该目录项是目标 inode 的最后一个硬链接时，同时回收 inode 和数据块。
+    pub fn unlink_child(&self, name: &str) -> isize {
+        let mut fs = self.fs.lock();
+        let target_inode_id = self.modify_disk_inode(|root_inode| {
+            if !root_inode.is_dir() {
+                return None;
+            }
+
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let mut dirent = DirEntry::empty();
+            let mut target_index = None;
+            for i in 0..file_count {
+                assert_eq!(
+                    root_inode.read_at(i * DIRENT_SZ, dirent.as_bytes_mut(), &self.block_device),
+                    DIRENT_SZ,
+                );
+                if dirent.name() == name {
+                    target_index = Some(i);
+                    break;
+                }
+            }
+
+            let target_index = target_index?;
+            let last_index = file_count.checked_sub(1)?;
+            if target_index != last_index {
+                let mut last = DirEntry::empty();
+                assert_eq!(
+                    root_inode.read_at(last_index * DIRENT_SZ, last.as_bytes_mut(), &self.block_device),
+                    DIRENT_SZ,
+                );
+                assert_eq!(
+                    root_inode.write_at(target_index * DIRENT_SZ, last.as_bytes(), &self.block_device),
+                    DIRENT_SZ,
+                );
+            }
+            root_inode.size -= DIRENT_SZ as u32;
+            Some(dirent.inode_number())
+        });
+        let Some(target_inode_id) = target_inode_id else {
+            return -1;
+        };
+
+        let (block_id, block_offset) = fs.get_disk_inode_pos(target_inode_id);
+        let remaining_links = get_block_cache(block_id as usize, Arc::clone(&self.block_device))
+            .lock()
+            .modify(block_offset, |disk_inode: &mut DiskInode| {
+                disk_inode.nlink -= 1;
+                disk_inode.nlink
+            });
+        if remaining_links == 0 {
+            let target = Self::new(
+                block_id,
+                block_offset,
+                self.fs.clone(),
+                self.block_device.clone(),
+                target_inode_id,
+            );
+            target.clear_locked(&mut fs);
+            fs.dealloc_inode(target_inode_id);
+        }
+
+        block_cache_sync_all();
+        0
     }
 
     /// List inodes by id under current inode
@@ -177,14 +302,12 @@ impl Inode {
     /// Clear the data in current inode
     pub fn clear(&self) {
         let mut fs = self.fs.lock();
-        self.modify_disk_inode(|disk_inode| {
-            let size = disk_inode.size;
-            let data_blocks_dealloc = disk_inode.clear_size(&self.block_device);
-            assert!(data_blocks_dealloc.len() == DiskInode::total_blocks(size) as usize);
-            for data_block in data_blocks_dealloc.into_iter() {
-                fs.dealloc_data(data_block);
-            }
-        });
+        self.clear_locked(&mut fs);
         block_cache_sync_all();
+    }
+
+    /// Search for a file or directory by name under the current inode
+    pub fn search(&self, name: &str) -> Option<Arc<Inode>> {
+        self.find(name)
     }
 }

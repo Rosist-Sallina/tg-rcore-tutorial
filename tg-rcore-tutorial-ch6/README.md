@@ -2,6 +2,29 @@
 
 本章在第五章"进程管理"的基础上，引入了 **文件系统** 支持。用户程序不再嵌入内核镜像，而是存放在 **磁盘镜像**（fs.img）中，内核通过 **VirtIO 块设备驱动** 和 **easy-fs 文件系统** 按名称加载和执行程序。同时，进程拥有了**文件描述符表**，可以通过 `open`/`close`/`read`/`write` 等标准接口操作文件。
 
+## 学生提交信息
+
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-T1L4`
+- crate 版本：`0.0.1-preview.2`
+- 依赖 crate：`rosist-sallina-tg-rcore-tutorial-easy-fs-t1l4`
+- 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
+- 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-ch6`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-T1L4-v0.0.1-preview.2`
+
+复现方式：
+
+```bash
+cargo clone rosist-sallina-tg-rcore-tutorial-T1L4
+cd rosist-sallina-tg-rcore-tutorial-T1L4
+cargo run --features exercise
+```
+
+```bash
+git clone https://github.com/Rosist-Sallina/tg-rcore-tutorial.git
+cd tg-rcore-tutorial/tg-rcore-tutorial-ch6
+cargo run --features exercise
+```
+
 通过本章的学习和实践，你将理解：
 
 - 什么是文件系统，为什么需要文件系统
