@@ -1,5 +1,15 @@
 # tg-rcore-tutorial-user
 
+## 学生提交信息
+
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-user-t1l5`
+- crate 版本：`0.0.1-preview.1`
+- 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
+- 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-user`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-user-t1l5-v0.0.1-preview.1`
+
+这个 crate 是 `ch8` 学生版实验链路的配套用户态程序包，依赖学生版 syscall crate 构建。
+
 本 crate 提供 rCore Tutorial 用户态运行时与示例用户程序集合。
 
 ## 设计目标

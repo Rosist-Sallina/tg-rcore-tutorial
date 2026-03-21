@@ -1,5 +1,15 @@
 # tg-rcore-tutorial-syscall
 
+## 学生提交信息
+
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-syscall-t1l5`
+- crate 版本：`0.0.1-preview.1`
+- 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
+- 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-syscall`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-syscall-t1l5-v0.0.1-preview.1`
+
+这个 crate 是 `ch8` 学生版实验链路的配套依赖，主要补了 Rust 2024 下用户态 syscall 内联汇编的兼容写法。
+
 [![Crates.io](https://img.shields.io/crates/v/tg-rcore-tutorial-syscall.svg)](https://crates.io/crates/tg-rcore-tutorial-syscall)
 [![Documentation](https://docs.rs/tg-rcore-tutorial-syscall/badge.svg)](https://docs.rs/tg-rcore-tutorial-syscall)
 [![License](https://img.shields.io/crates/l/tg-rcore-tutorial-syscall.svg)](LICENSE)

@@ -27,7 +27,7 @@ use crate::{
     build_flags, fs::Fd, map_portal, parse_flags, processor::ProcessorInner, Sv39, Sv39Manager,
     PROCESSOR,
 };
-use alloc::{alloc::alloc_zeroed, boxed::Box, sync::Arc, vec::Vec};
+use alloc::{alloc::alloc_zeroed, boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
 use core::alloc::Layout;
 use spin::Mutex;
 use tg_kernel_context::{foreign::ForeignContext, LocalContext};
@@ -84,9 +84,171 @@ pub struct Process {
     pub mutex_list: Vec<Option<Arc<dyn MutexTrait>>>,
     /// 条件变量列表（**本章新增**，所有线程共享）
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+
+    /// 是否为当前进程启用死锁检测。
+    pub deadlock: bool,
+    mutex_owner: Vec<Option<ThreadId>>,
+    mutex_wait: BTreeMap<ThreadId, usize>,
+    semaphore_allocation: BTreeMap<ThreadId, Vec<usize>>,
+    semaphore_wait: BTreeMap<ThreadId, usize>,
 }
 
 impl Process {
+    fn reset_deadlock_state(&mut self) {
+        self.mutex_owner = vec![None; self.mutex_list.len()];
+        self.mutex_wait.clear();
+        self.semaphore_allocation.clear();
+        self.semaphore_wait.clear();
+    }
+
+    fn ensure_mutex_slot(&mut self, mutex_id: usize) {
+        if self.mutex_owner.len() <= mutex_id {
+            self.mutex_owner.resize(mutex_id + 1, None);
+        }
+    }
+
+    fn ensure_semaphore_slot(alloc: &mut Vec<usize>, sem_id: usize) {
+        if alloc.len() <= sem_id {
+            alloc.resize(sem_id + 1, 0);
+        }
+    }
+
+    fn semaphore_allocation_mut(&mut self, tid: ThreadId, sem_id: usize) -> &mut Vec<usize> {
+        let alloc = self.semaphore_allocation.entry(tid).or_insert_with(Vec::new);
+        Self::ensure_semaphore_slot(alloc, sem_id);
+        alloc
+    }
+
+    fn semaphore_allocation_of(&self, tid: ThreadId) -> Option<&Vec<usize>> {
+        self.semaphore_allocation.get(&tid)
+    }
+
+    /// 切换当前进程的死锁检测开关，并重置对应的跟踪状态。
+    pub fn set_deadlock_detect(&mut self, is_enable: bool) {
+        self.deadlock = is_enable;
+        self.reset_deadlock_state();
+    }
+
+    /// 判断一次阻塞互斥锁请求是否会形成等待环路。
+    pub fn would_mutex_deadlock(&self, tid: ThreadId, mutex_id: usize) -> bool {
+        let Some(owner) = self.mutex_owner.get(mutex_id).and_then(|owner| *owner) else {
+            return false;
+        };
+        if owner == tid {
+            return true;
+        }
+        let mut current = owner;
+        for _ in 0..=self.mutex_wait.len() {
+            if current == tid {
+                return true;
+            }
+            let Some(wait_mutex_id) = self.mutex_wait.get(&current).copied() else {
+                return false;
+            };
+            let Some(next_owner) = self.mutex_owner.get(wait_mutex_id).and_then(|owner| *owner)
+            else {
+                return false;
+            };
+            current = next_owner;
+        }
+        false
+    }
+
+    /// 记录互斥锁获取成功后的所有权。
+    pub fn record_mutex_lock(&mut self, tid: ThreadId, mutex_id: usize) {
+        self.ensure_mutex_slot(mutex_id);
+        self.mutex_wait.remove(&tid);
+        self.mutex_owner[mutex_id] = Some(tid);
+    }
+
+    /// 记录互斥锁阻塞等待关系。
+    pub fn record_mutex_wait(&mut self, tid: ThreadId, mutex_id: usize) {
+        self.ensure_mutex_slot(mutex_id);
+        self.mutex_wait.insert(tid, mutex_id);
+    }
+
+    /// 记录互斥锁释放后的所有权转移。
+    pub fn record_mutex_unlock(&mut self, mutex_id: usize, waking_tid: Option<ThreadId>) {
+        self.ensure_mutex_slot(mutex_id);
+        match waking_tid {
+            Some(tid) => {
+                self.mutex_wait.remove(&tid);
+                self.mutex_owner[mutex_id] = Some(tid);
+            }
+            None => self.mutex_owner[mutex_id] = None,
+        }
+    }
+
+    /// 判断一次信号量请求是否会让当前等待状态变为不安全。
+    pub fn would_semaphore_deadlock(
+        &self,
+        tid: ThreadId,
+        sem_id: usize,
+        threads: &[ThreadId],
+        available: &[usize],
+    ) -> bool {
+        let mut work = available.to_vec();
+        let mut finish = vec![false; threads.len()];
+        let mut requests = self.semaphore_wait.clone();
+        requests.insert(tid, sem_id);
+
+        loop {
+            let mut progressed = false;
+            for (idx, thread) in threads.iter().copied().enumerate() {
+                if finish[idx] {
+                    continue;
+                }
+                let can_finish = match requests.get(&thread).copied() {
+                    Some(request_sem) => work.get(request_sem).copied().unwrap_or(0) > 0,
+                    None => true,
+                };
+                if !can_finish {
+                    continue;
+                }
+                finish[idx] = true;
+                progressed = true;
+                if let Some(allocation) = self.semaphore_allocation_of(thread) {
+                    for (resource_id, count) in allocation.iter().copied().enumerate() {
+                        if resource_id >= work.len() {
+                            break;
+                        }
+                        work[resource_id] += count;
+                    }
+                }
+            }
+            if !progressed {
+                break;
+            }
+        }
+
+        finish.into_iter().any(|done| !done)
+    }
+
+    /// 记录信号量获取成功后的分配关系。
+    pub fn record_semaphore_down(&mut self, tid: ThreadId, sem_id: usize) {
+        self.semaphore_wait.remove(&tid);
+        let alloc = self.semaphore_allocation_mut(tid, sem_id);
+        alloc[sem_id] += 1;
+    }
+
+    /// 记录信号量阻塞等待关系。
+    pub fn record_semaphore_wait(&mut self, tid: ThreadId, sem_id: usize) {
+        self.semaphore_wait.insert(tid, sem_id);
+    }
+
+    /// 记录信号量释放及被唤醒线程的资源交接。
+    pub fn record_semaphore_up(&mut self, tid: ThreadId, sem_id: usize, waking_tid: Option<ThreadId>) {
+        let alloc = self.semaphore_allocation_mut(tid, sem_id);
+        if alloc[sem_id] > 0 {
+            alloc[sem_id] -= 1;
+        }
+        if let Some(waking_tid) = waking_tid {
+            self.semaphore_wait.remove(&waking_tid);
+            let alloc = self.semaphore_allocation_mut(waking_tid, sem_id);
+            alloc[sem_id] += 1;
+        }
+    }
+
     /// exec：替换当前进程的地址空间和主线程上下文
     ///
     /// 注意：只支持单线程进程执行 exec
@@ -134,6 +296,11 @@ impl Process {
                 semaphore_list: Vec::new(),
                 mutex_list: Vec::new(),
                 condvar_list: Vec::new(),
+                deadlock: false,
+                mutex_owner: Vec::new(),
+                mutex_wait: BTreeMap::new(),
+                semaphore_allocation: BTreeMap::new(),
+                semaphore_wait: BTreeMap::new(),
             },
             thread,
         ))
@@ -206,6 +373,11 @@ impl Process {
                 semaphore_list: Vec::new(),
                 mutex_list: Vec::new(),
                 condvar_list: Vec::new(),
+                deadlock: false,
+                mutex_owner: Vec::new(),
+                mutex_wait: BTreeMap::new(),
+                semaphore_allocation: BTreeMap::new(),
+                semaphore_wait: BTreeMap::new(),
             },
             thread,
         ))
