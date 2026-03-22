@@ -4,24 +4,29 @@
 
 ## 学生提交信息
 
-- crate 名称：`rosist-sallina-tg-rcore-tutorial-T1L1`
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-T3L3`
 - crate 版本：`0.0.1-preview.1`
+- 依赖 crate：`rosist-sallina-tg-rcore-tutorial-virtio-drivers-t3l3`
 - 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
 - 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-ch3`
-- 建议 tag：`rosist-sallina-tg-rcore-tutorial-T1L1-v0.0.1-preview.1`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-T3L3-v0.0.1-preview.1`
 
 复现方式：
 
 ```bash
-cargo clone rosist-sallina-tg-rcore-tutorial-T1L1
-cd rosist-sallina-tg-rcore-tutorial-T1L1
-cargo run --features exercise
+cargo clone rosist-sallina-tg-rcore-tutorial-T3L3
+cd rosist-sallina-tg-rcore-tutorial-T3L3
+cargo run --features snake
+```
+
+```bash
+cargo run --features "snake irq_input"
 ```
 
 ```bash
 git clone https://github.com/Rosist-Sallina/tg-rcore-tutorial.git
 cd tg-rcore-tutorial/tg-rcore-tutorial-ch3
-cargo run --features exercise
+cargo run --features snake
 ```
 
 通过本章的学习和实践，你将理解：

@@ -11,23 +11,26 @@
 
 [package]
 edition = "2018"
-name = "virtio-drivers"
-version = "0.1.0"
+name = "rosist-sallina-tg-rcore-tutorial-virtio-drivers-t3l3"
+version = "0.0.1-preview.1"
 authors = [
     "Jiajie Chen <noc@jiegec.ac.cn>",
     "Runji Wang <wangrunji0408@163.com>",
     "Yuekai Jia <equation618@gmail.com>",
     "Andrew Walbran <qwandor@google.com>",
 ]
-description = "VirtIO guest drivers."
+description = "Student AI4OSE extension lab virtio-drivers crate for Chapter 3 framebuffer snake support."
 readme = "README.md"
-keywords = ["virtio"]
+keywords = ["ai", "ai4ose", "kernel", "learning", "os"]
 categories = [
     "hardware-support",
     "no-std",
 ]
 license = "MIT"
-repository = "https://github.com/rcore-os/virtio-drivers"
+repository = "https://github.com/Rosist-Sallina/tg-rcore-tutorial"
+homepage = "https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/vendor/virtio-drivers"
+documentation = "https://docs.rs/rosist-sallina-tg-rcore-tutorial-virtio-drivers-t3l3"
+exclude = [".cargo-ok", ".cargo_vcs_info.json", ".github/**", "Cargo.toml.orig"]
 
 [dependencies.bitflags]
 version = "1.3"

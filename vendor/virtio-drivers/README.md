@@ -1,5 +1,15 @@
 # VirtIO-drivers-rs
 
+## 学生提交信息
+
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-virtio-drivers-t3l3`
+- crate 版本：`0.0.1-preview.1`
+- 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
+- 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/vendor/virtio-drivers`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-virtio-drivers-t3l3-v0.0.1-preview.1`
+
+这个 crate 是 `ch3` 拓展实验图形版贪吃蛇的配套驱动依赖，包含本地修过的 GPU 初始化和队列路径。
+
 [![CI](https://github.com/rcore-os/virtio-drivers/workflows/CI/badge.svg?branch=master)](https://github.com/rcore-os/virtio-drivers/actions)
 
 VirtIO guest drivers in Rust. For **no_std** environment.
