@@ -350,7 +350,7 @@ package = "tg-rcore-tutorial-console"
 path = "../../tg-rcore-tutorial-syscall"
 version = "0.0.1-preview.1"
 features = ["user"]
-package = "rosist-sallina-tg-rcore-tutorial-syscall-t1l5"
+package = "rosist-sallina-tg-rcore-tutorial-syscall-t3l3"
 
 [profile.dev]
 panic = "abort"
