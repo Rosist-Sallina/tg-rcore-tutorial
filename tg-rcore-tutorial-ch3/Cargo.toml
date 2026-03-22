@@ -2,7 +2,7 @@
 name = "rosist-sallina-tg-rcore-tutorial-T3L3"
 description = "Student AI4OSE extension lab crate for Chapter 3 of rCore Tutorial: framebuffer snake with polling and IRQ input."
 edition = "2024"
-version = "0.0.1-preview.1"
+version = "0.0.1-preview.2"
 authors = ["Rosist_Sallina <sallinarosist@gmail.com>"]
 repository = "https://github.com/Rosist-Sallina/tg-rcore-tutorial"
 homepage = "https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-ch3"
@@ -38,7 +38,7 @@ tg-linker = { package = "tg-rcore-tutorial-linker", path = "../tg-rcore-tutorial
 tg-console = { package = "tg-rcore-tutorial-console", path = "../tg-rcore-tutorial-console", version = "0.4.8" }
 tg-kernel-context = { package = "tg-rcore-tutorial-kernel-context", path = "../tg-rcore-tutorial-kernel-context", version = "0.4.8" }
 tg-kernel-alloc = { package = "tg-rcore-tutorial-kernel-alloc", path = "../tg-rcore-tutorial-kernel-alloc", version = "0.4.8" }
-tg-syscall = { package = "rosist-sallina-tg-rcore-tutorial-syscall-t3l3", path = "../tg-rcore-tutorial-syscall", version = "0.0.1-preview.1", features = ["kernel"] }
+tg-syscall = { package = "rosist-sallina-tg-rcore-tutorial-syscall-t3l3", path = "../tg-rcore-tutorial-syscall", version = "0.0.1-preview.2", features = ["kernel"] }
 
 [build-dependencies]
 tg-linker = { package = "tg-rcore-tutorial-linker", path = "../tg-rcore-tutorial-linker", version = "0.4.8" }
