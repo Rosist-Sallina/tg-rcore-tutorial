@@ -315,6 +315,10 @@ name = "sig_tests"
 path = "src/bin/sig_tests.rs"
 
 [[bin]]
+name = "snake_fb"
+path = "src/bin/snake_fb.rs"
+
+[[bin]]
 name = "sync_sem"
 path = "src/bin/sync_sem.rs"
 
@@ -338,13 +342,15 @@ path = "src/bin/user_shell.rs"
 version = "0.0.2"
 
 [dependencies.tg-console]
-version = "0.4.2-preview.7"
+path = "../../tg-rcore-tutorial-console"
+version = "0.4.8"
 package = "tg-rcore-tutorial-console"
 
 [dependencies.tg-syscall]
-version = "0.4.2-preview.7"
+path = "../../tg-rcore-tutorial-syscall"
+version = "0.0.1-preview.1"
 features = ["user"]
-package = "tg-rcore-tutorial-syscall"
+package = "rosist-sallina-tg-rcore-tutorial-syscall-t1l5"
 
 [profile.dev]
 panic = "abort"

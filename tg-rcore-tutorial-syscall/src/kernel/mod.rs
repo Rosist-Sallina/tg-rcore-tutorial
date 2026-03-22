@@ -45,6 +45,9 @@ pub trait IO: Sync {
     fn write(&self, caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
         unimplemented!()
     }
+    fn input_try_getchar(&self, caller: Caller) -> isize {
+        unimplemented!()
+    }
     fn open(&self, caller: Caller, path: usize, flags: usize) -> isize {
         unimplemented!()
     }
@@ -69,6 +72,23 @@ pub trait IO: Sync {
         unimplemented!()
     }
     fn fstat(&self, caller: Caller, fd: usize, st: usize) -> isize {
+        unimplemented!()
+    }
+    fn fb_info(&self, caller: Caller, info: usize) -> isize {
+        unimplemented!()
+    }
+    fn fb_fill_rect(
+        &self,
+        caller: Caller,
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        color: u32,
+    ) -> isize {
+        unimplemented!()
+    }
+    fn fb_present(&self, caller: Caller) -> isize {
         unimplemented!()
     }
 }
@@ -243,6 +263,7 @@ pub fn handle(caller: Caller, id: SyscallId, args: [usize; 6]) -> SyscallResult 
     match id {
         Id::WRITE => IO.call(id, |io| io.write(caller, args[0], args[1], args[2])),
         Id::READ => IO.call(id, |io| io.read(caller, args[0], args[1], args[2])),
+        Id::INPUT_TRY_GETCHAR => IO.call(id, |io| io.input_try_getchar(caller)),
         Id::OPENAT => IO.call(id, |io| io.open(caller, args[0], args[1])),
         Id::CLOSE => IO.call(id, |io| io.close(caller, args[0])),
         Id::LINKAT => IO.call(id, |io| {
@@ -259,6 +280,11 @@ pub fn handle(caller: Caller, id: SyscallId, args: [usize; 6]) -> SyscallResult 
             io.unlinkat(caller, args[0] as _, args[1], args[2] as _)
         }),
         Id::FSTAT => IO.call(id, |io| io.fstat(caller, args[0], args[1])),
+        Id::FB_INFO => IO.call(id, |io| io.fb_info(caller, args[0])),
+        Id::FB_FILL_RECT => IO.call(id, |io| {
+            io.fb_fill_rect(caller, args[0], args[1], args[2], args[3], args[4] as u32)
+        }),
+        Id::FB_PRESENT => IO.call(id, |io| io.fb_present(caller)),
         Id::EXIT => PROCESS.call(id, |proc| proc.exit(caller, args[0])),
         Id::CLONE => PROCESS.call(id, |proc| proc.fork(caller)),
         Id::EXECVE => PROCESS.call(id, |proc| proc.exec(caller, args[0], args[1])),

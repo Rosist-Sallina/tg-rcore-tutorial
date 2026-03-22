@@ -28,10 +28,14 @@
 
 // 任务管理模块：定义任务控制块（TCB）和调度事件
 mod task;
+// VirtIO GPU 图形输出
+mod virtio_gpu;
 
 // 引入控制台输出宏（print! / println!），由 tg_console 库提供
 #[macro_use]
 extern crate tg_console;
+
+extern crate alloc;
 
 // 本地模块：Console 和 SyscallContext 的实现
 use impls::{Console, SyscallContext};
@@ -53,6 +57,8 @@ core::arch::global_asm!(include_str!(env!("APP_ASM")));
 
 // 最大支持的应用程序数量
 const APP_CAPACITY: usize = 32;
+// QEMU virt 机器上可交给内核堆管理的物理内存上限。
+const MEMORY: usize = 24 << 20;
 
 // 定义内核入口点：分配 (APP_CAPACITY + 2) * 8 KiB = 272 KiB 的内核栈
 // 比第二章更大，因为需要同时容纳多个任务的内核上下文。
@@ -86,16 +92,34 @@ unsafe extern "C" fn _start() -> ! {
 /// - 任务之间通过时间片轮转切换（抢占式调度，默认模式）
 /// - 任务可以主动让出 CPU（协作式调度，通过 yield，需启用 `coop` feature）
 extern "C" fn rust_main() -> ! {
+    let layout = tg_linker::KernelLayout::locate();
     // 第一步：清零 BSS 段（未初始化的全局变量区域）
-    unsafe { tg_linker::KernelLayout::locate().zero_bss() };
+    unsafe { layout.zero_bss() };
 
     // 第二步：初始化控制台输出（使 print!/println! 可用）
     // 默认日志级别为 info（可通过 LOG 环境变量覆盖）
     tg_console::init_console(&Console);
+    #[cfg(feature = "snake")]
+    tg_console::set_log_level(option_env!("LOG").or(Some("warn")));
+    #[cfg(not(feature = "snake"))]
     tg_console::set_log_level(option_env!("LOG").or(Some("info")));
+    #[cfg(not(feature = "snake"))]
     tg_console::test_log();
 
-    // 第三步：初始化系统调用处理
+    // 第三步：初始化内核堆，供 virtio-gpu 的 DMA/队列分配使用
+    tg_kernel_alloc::init(layout.start() as _);
+    unsafe {
+        tg_kernel_alloc::transfer(core::slice::from_raw_parts_mut(
+            layout.end() as _,
+            MEMORY - layout.len(),
+        ))
+    };
+    // 第四步：初始化图形输出
+    virtio_gpu::init();
+    virtio_gpu::clear(virtio_gpu::rgb(0x00, 0x00, 0x00));
+    virtio_gpu::present();
+
+    // 第五步：初始化系统调用处理
     // 比第二章多了 scheduling（yield）、clock（获取时间）和 trace（追踪，练习题）
     tg_syscall::init_io(&SyscallContext);
     tg_syscall::init_process(&SyscallContext);
@@ -103,7 +127,7 @@ extern "C" fn rust_main() -> ! {
     tg_syscall::init_clock(&SyscallContext);
     tg_syscall::init_trace(&SyscallContext);
 
-    // 第四步：初始化任务控制块数组，加载所有用户程序
+    // 第六步：初始化任务控制块数组，加载所有用户程序
     let mut tcbs = [TaskControlBlock::ZERO; APP_CAPACITY];
     let mut index_mod = 0;
     for (i, app) in tg_linker::AppMeta::locate().iter().enumerate() {
@@ -114,7 +138,7 @@ extern "C" fn rust_main() -> ! {
     }
     println!();
 
-    // 第五步：开启 S 特权级时钟中断
+    // 第七步：开启 S 特权级时钟中断
     // 这是实现抢占式调度的关键：允许时钟中断打断用户程序的执行
     unsafe { sie::set_stimer() };
 
@@ -206,10 +230,24 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     tg_sbi::shutdown(true)
 }
 
+const UART_BASE: usize = 0x1000_0000;
+const UART_RBR: usize = UART_BASE;
+const UART_LSR: usize = UART_BASE + 5;
+
+fn uart_try_getchar() -> Option<u8> {
+    let lsr = unsafe { (UART_LSR as *const u8).read_volatile() };
+    if lsr & 1 == 0 {
+        None
+    } else {
+        Some(unsafe { (UART_RBR as *const u8).read_volatile() })
+    }
+}
+
 // ========== 接口实现 ==========
 
 /// 各依赖库所需接口的具体实现
 mod impls {
+    use crate::{uart_try_getchar, virtio_gpu};
     use tg_syscall::*;
 
     /// 控制台实现：通过 SBI 逐字符输出
@@ -245,6 +283,37 @@ mod impls {
                     -1
                 }
             }
+        }
+
+        #[inline]
+        fn input_try_getchar(&self, _caller: Caller) -> isize {
+            uart_try_getchar().map_or(-1, |c| c as isize)
+        }
+
+        #[inline]
+        fn fb_info(&self, _caller: Caller, info: usize) -> isize {
+            unsafe { *(info as *mut FrameBufferInfo) = virtio_gpu::info() };
+            0
+        }
+
+        #[inline]
+        fn fb_fill_rect(
+            &self,
+            _caller: Caller,
+            x: usize,
+            y: usize,
+            w: usize,
+            h: usize,
+            color: u32,
+        ) -> isize {
+            virtio_gpu::fill_rect(x, y, w, h, color);
+            0
+        }
+
+        #[inline]
+        fn fb_present(&self, _caller: Caller) -> isize {
+            virtio_gpu::present();
+            0
         }
     }
 

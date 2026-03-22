@@ -19,6 +19,7 @@ exclude = [
 [features]
 coop = []
 exercise = []
+snake = []
 
 [profile.dev]
 panic = "abort"
@@ -27,13 +28,16 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
+virtio-drivers = { path = "../vendor/virtio-drivers" }
 riscv = "0.10.1"
+spin = "0.9"
 
 tg-sbi = { package = "tg-rcore-tutorial-sbi", path = "../tg-rcore-tutorial-sbi", version = "0.4.8", features = ["nobios"] }
 tg-linker = { package = "tg-rcore-tutorial-linker", path = "../tg-rcore-tutorial-linker", version = "0.4.8" }
 tg-console = { package = "tg-rcore-tutorial-console", path = "../tg-rcore-tutorial-console", version = "0.4.8" }
 tg-kernel-context = { package = "tg-rcore-tutorial-kernel-context", path = "../tg-rcore-tutorial-kernel-context", version = "0.4.8" }
-tg-syscall = { package = "tg-rcore-tutorial-syscall", path = "../tg-rcore-tutorial-syscall", version = "0.4.8", features = ["kernel"] }
+tg-kernel-alloc = { package = "tg-rcore-tutorial-kernel-alloc", path = "../tg-rcore-tutorial-kernel-alloc", version = "0.4.8" }
+tg-syscall = { package = "rosist-sallina-tg-rcore-tutorial-syscall-t1l5", path = "../tg-rcore-tutorial-syscall", version = "0.0.1-preview.1", features = ["kernel"] }
 
 [build-dependencies]
 tg-linker = { package = "tg-rcore-tutorial-linker", path = "../tg-rcore-tutorial-linker", version = "0.4.8" }

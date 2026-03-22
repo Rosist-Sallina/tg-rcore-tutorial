@@ -1,4 +1,4 @@
-use crate::{ClockId, SignalAction, SignalNo, Stat, SyscallId, TimeSpec};
+use crate::{ClockId, FrameBufferInfo, SignalAction, SignalNo, Stat, SyscallId, TimeSpec};
 use bitflags::*;
 use native::*;
 
@@ -20,6 +20,35 @@ pub fn write(fd: usize, buffer: &[u8]) -> isize {
 pub fn read(fd: usize, buffer: &[u8]) -> isize {
     // SAFETY: buffer 是有效的切片引用，其指针和长度在调用期间有效
     unsafe { syscall3(SyscallId::READ, fd, buffer.as_ptr() as _, buffer.len()) }
+}
+
+/// 非阻塞读取一个终端字符。
+#[inline]
+pub fn input_try_getchar() -> Option<u8> {
+    let ret = unsafe { syscall0(SyscallId::INPUT_TRY_GETCHAR) };
+    (0..=u8::MAX as isize)
+        .contains(&ret)
+        .then_some(ret as u8)
+}
+
+/// 读取帧缓冲信息。
+#[inline]
+pub fn fb_info() -> Option<FrameBufferInfo> {
+    let mut info = FrameBufferInfo::ZERO;
+    let ret = unsafe { syscall1(SyscallId::FB_INFO, &mut info as *mut _ as usize) };
+    (ret == 0).then_some(info)
+}
+
+/// 填充一个矩形区域。
+#[inline]
+pub fn fb_fill_rect(x: usize, y: usize, w: usize, h: usize, color: u32) -> isize {
+    unsafe { syscall5(SyscallId::FB_FILL_RECT, x, y, w, h, color as usize) }
+}
+
+/// 刷新帧缓冲到屏幕。
+#[inline]
+pub fn fb_present() -> isize {
+    unsafe { syscall0(SyscallId::FB_PRESENT) }
 }
 
 bitflags! {

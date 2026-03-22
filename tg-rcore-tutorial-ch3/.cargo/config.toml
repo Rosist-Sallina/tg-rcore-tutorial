@@ -8,11 +8,10 @@ target = "riscv64gc-unknown-none-elf"
 # 等价于：qemu-system-riscv64 -machine virt -nographic -bios none -kernel <编译产物>
 [target.riscv64gc-unknown-none-elf]
 runner = [
-    "qemu-system-riscv64",
-    "-machine", "virt",       # 使用 QEMU virt 虚拟平台
-    "-nographic",             # 无图形界面，输出重定向到终端
-    "-bios", "none",          # 不加载外部 BIOS/SBI 固件（tg-sbi 内建）
-    "-kernel",                # 后接 ELF 可执行文件路径（由 cargo 自动填充）
+    "/bin/sh",
+    "-c",
+    "if [ -t 0 ]; then old=$(stty -g); trap 'stty \"$old\"' EXIT INT TERM; stty raw -echo; fi; exec qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio -global virtio-mmio.force-legacy=false -device virtio-gpu-device,bus=virtio-mmio-bus.0,xres=320,yres=240 -bios none -kernel \"$1\"",
+    "sh",
 ]
 
 

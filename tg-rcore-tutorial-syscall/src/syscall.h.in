@@ -320,6 +320,10 @@
 #define __NR_spawn 400
 #define __NR_trace 410
 #define __NR_enable_deadlock_detect 469
+#define __NR_input_try_getchar 500
+#define __NR_fb_info 501
+#define __NR_fb_fill_rect 502
+#define __NR_fb_present 503
 
 
 // #define __NR_sysriscv __NR_arch_specific_syscall
