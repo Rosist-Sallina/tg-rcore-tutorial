@@ -20,6 +20,7 @@ exclude = [
 coop = []
 exercise = []
 snake = []
+irq_input = []
 
 [profile.dev]
 panic = "abort"

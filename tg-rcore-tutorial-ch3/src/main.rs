@@ -119,6 +119,9 @@ extern "C" fn rust_main() -> ! {
     virtio_gpu::clear(virtio_gpu::rgb(0x00, 0x00, 0x00));
     virtio_gpu::present();
 
+    #[cfg(feature = "irq_input")]
+    init_interrupt_input();
+
     // 第五步：初始化系统调用处理
     // 比第二章多了 scheduling（yield）、clock（获取时间）和 trace（追踪，练习题）
     tg_syscall::init_io(&SyscallContext);
@@ -169,6 +172,11 @@ extern "C" fn rust_main() -> ! {
                         tg_sbi::set_timer(u64::MAX);
                         log::trace!("app{i} timeout");
                         false // 不结束任务，切换到下一个
+                    }
+                    #[cfg(feature = "irq_input")]
+                    Trap::Interrupt(Interrupt::SupervisorExternal) => {
+                        handle_external_interrupt();
+                        continue;
                     }
                     // ─── 系统调用：用户程序执行了 ecall 指令 ───
                     Trap::Exception(Exception::UserEnvCall) => {
@@ -248,6 +256,8 @@ fn uart_try_getchar() -> Option<u8> {
 /// 各依赖库所需接口的具体实现
 mod impls {
     use crate::{uart_try_getchar, virtio_gpu};
+    #[cfg(feature = "irq_input")]
+    use crate::INPUT_QUEUE;
     use tg_syscall::*;
 
     /// 控制台实现：通过 SBI 逐字符输出
@@ -287,7 +297,17 @@ mod impls {
 
         #[inline]
         fn input_try_getchar(&self, _caller: Caller) -> isize {
-            uart_try_getchar().map_or(-1, |c| c as isize)
+            #[cfg(feature = "irq_input")]
+            {
+                INPUT_QUEUE
+                    .pop()
+                    .or_else(uart_try_getchar)
+                    .map_or(-1, |c| c as isize)
+            }
+            #[cfg(not(feature = "irq_input"))]
+            {
+                uart_try_getchar().map_or(-1, |c| c as isize)
+            }
         }
 
         #[inline]
@@ -382,6 +402,113 @@ mod impls {
             tg_console::log::info!("trace: not implemented");
             -1
         }
+    }
+}
+
+#[cfg(feature = "irq_input")]
+const UART_IER: usize = UART_BASE + 1;
+#[cfg(feature = "irq_input")]
+const UART_FCR: usize = UART_BASE + 2;
+#[cfg(feature = "irq_input")]
+const PLIC_BASE: usize = 0x0c00_0000;
+#[cfg(feature = "irq_input")]
+const UART_IRQ: u32 = 10;
+#[cfg(feature = "irq_input")]
+const PLIC_UART_PRIORITY: usize = PLIC_BASE + UART_IRQ as usize * 4;
+#[cfg(feature = "irq_input")]
+const PLIC_SENABLE: usize = PLIC_BASE + 0x2080;
+#[cfg(feature = "irq_input")]
+const PLIC_STHRESHOLD: usize = PLIC_BASE + 0x201000;
+#[cfg(feature = "irq_input")]
+const PLIC_SCLAIM: usize = PLIC_BASE + 0x201004;
+
+#[cfg(feature = "irq_input")]
+struct InputQueue {
+    inner: core::cell::UnsafeCell<QueueState>,
+}
+
+#[cfg(feature = "irq_input")]
+#[derive(Clone, Copy)]
+struct QueueState {
+    buf: [u8; 64],
+    head: usize,
+    tail: usize,
+    len: usize,
+}
+
+#[cfg(feature = "irq_input")]
+unsafe impl Sync for InputQueue {}
+
+#[cfg(feature = "irq_input")]
+impl InputQueue {
+    const fn new() -> Self {
+        Self {
+            inner: core::cell::UnsafeCell::new(QueueState {
+                buf: [0; 64],
+                head: 0,
+                tail: 0,
+                len: 0,
+            }),
+        }
+    }
+
+    fn push(&self, c: u8) {
+        let q = unsafe { &mut *self.inner.get() };
+        if q.len == q.buf.len() {
+            return;
+        }
+        q.buf[q.tail] = c;
+        q.tail = (q.tail + 1) % q.buf.len();
+        q.len += 1;
+    }
+
+    fn pop(&self) -> Option<u8> {
+        let q = unsafe { &mut *self.inner.get() };
+        if q.len == 0 {
+            return None;
+        }
+        let c = q.buf[q.head];
+        q.head = (q.head + 1) % q.buf.len();
+        q.len -= 1;
+        Some(c)
+    }
+}
+
+#[cfg(feature = "irq_input")]
+static INPUT_QUEUE: InputQueue = InputQueue::new();
+
+#[cfg(feature = "irq_input")]
+fn init_interrupt_input() {
+    unsafe {
+        (UART_FCR as *mut u8).write_volatile(0x07);
+        (UART_IER as *mut u8).write_volatile(0x01);
+        (PLIC_UART_PRIORITY as *mut u32).write_volatile(1);
+        (PLIC_SENABLE as *mut u32).write_volatile(1 << UART_IRQ);
+        (PLIC_STHRESHOLD as *mut u32).write_volatile(0);
+        sie::set_sext();
+    }
+}
+
+#[cfg(feature = "irq_input")]
+fn plic_claim() -> u32 {
+    unsafe { (PLIC_SCLAIM as *const u32).read_volatile() }
+}
+
+#[cfg(feature = "irq_input")]
+fn plic_complete(irq: u32) {
+    unsafe { (PLIC_SCLAIM as *mut u32).write_volatile(irq) }
+}
+
+#[cfg(feature = "irq_input")]
+fn handle_external_interrupt() {
+    let irq = plic_claim();
+    if irq == UART_IRQ {
+        while let Some(c) = uart_try_getchar() {
+            INPUT_QUEUE.push(c);
+        }
+    }
+    if irq != 0 {
+        plic_complete(irq);
     }
 }
 
