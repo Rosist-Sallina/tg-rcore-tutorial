@@ -1,5 +1,30 @@
 # 第七章：进程间通信与信号
 
+## 学生提交信息
+
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-T3L7`
+- crate 版本：`0.0.1-preview.1`
+- 依赖 crate：`rosist-sallina-tg-rcore-tutorial-syscall-t3l3`
+- 依赖 crate：`rosist-sallina-tg-rcore-tutorial-easy-fs-t1l4`
+- 用户程序来源：构建时从官方 `tg-rcore-tutorial-user` 注入 `pacman`
+- 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
+- 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-ch7`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-T3L7-v0.0.1-preview.1`
+
+复现方式：
+
+```bash
+cargo clone rosist-sallina-tg-rcore-tutorial-T3L7
+cd rosist-sallina-tg-rcore-tutorial-T3L7
+./run_pacman.sh
+```
+
+```bash
+git clone https://github.com/Rosist-Sallina/tg-rcore-tutorial.git
+cd tg-rcore-tutorial/tg-rcore-tutorial-ch7
+./run_pacman.sh
+```
+
 本章在第六章"文件系统"的基础上，引入了两大新机制：
 
 1. **管道（Pipe）**：基于文件描述符的进程间通信机制，用于父子进程之间的单向数据传递

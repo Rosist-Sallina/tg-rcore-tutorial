@@ -14,12 +14,14 @@ struct Cases {
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=templates/pacman.rs");
     println!("cargo:rerun-if-env-changed=LOG");
     println!("cargo:rerun-if-env-changed=TG_USER_DIR");
     println!("cargo:rerun-if-env-changed=TG_USER_VERSION");
     println!("cargo:rerun-if-env-changed=TG_USER_CRATE");
     println!("cargo:rerun-if-env-changed=TG_USER_LOCAL_DIR");
     println!("cargo:rerun-if-env-changed=TG_SKIP_USER_APPS");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_PACMAN");
 
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
 
@@ -79,13 +81,18 @@ fn build_apps_and_pack_fs() {
         panic!("failed to parse cases.toml: {err}")
     });
 
-    let cases = cases_map.remove("ch7").unwrap_or_default();
+    let case_key = if env::var("CARGO_FEATURE_PACMAN").is_ok() {
+        "ch7_pacman"
+    } else {
+        "ch7"
+    };
+    let cases = cases_map.remove(case_key).unwrap_or_default();
     let base = cases.base.unwrap_or(0);
     let step = cases.step.unwrap_or(0);
     let names = cases.cases.unwrap_or_default();
 
     if names.is_empty() {
-        panic!("no user cases found for ch7 in {}", cases_path.display());
+        panic!("no user cases found for {case_key} in {}", cases_path.display());
     }
 
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
@@ -191,10 +198,12 @@ fn easy_fs_pack(
 
 fn ensure_tg_user() -> PathBuf {
     // 优先使用 TG_USER_DIR 显式指定的目录
-    if let Ok(dir) = env::var("TG_USER_DIR") {
-        let path = PathBuf::from(dir);
-        if path.join("Cargo.toml").exists() {
-            return path;
+    if env::var("CARGO_FEATURE_PACMAN").is_err() {
+        if let Ok(dir) = env::var("TG_USER_DIR") {
+            let path = PathBuf::from(dir);
+            if path.join("Cargo.toml").exists() {
+                return path;
+            }
         }
     }
 
@@ -212,6 +221,10 @@ fn ensure_tg_user() -> PathBuf {
     // 本地缓存目录已存在则直接使用
     if tg_user_dir.join("Cargo.toml").exists() {
         ensure_workspace_table(&tg_user_dir);
+        patch_tg_user_dependencies(&tg_user_dir);
+        if env::var("CARGO_FEATURE_PACMAN").is_ok() {
+            patch_tg_user_for_pacman(&tg_user_dir, &manifest_dir);
+        }
         return tg_user_dir;
     }
 
@@ -243,6 +256,10 @@ fn ensure_tg_user() -> PathBuf {
 
     // 克隆后补加 [workspace]，防止父 workspace 将其识别为非成员而报错
     ensure_workspace_table(&tg_user_dir);
+    patch_tg_user_dependencies(&tg_user_dir);
+    if env::var("CARGO_FEATURE_PACMAN").is_ok() {
+        patch_tg_user_for_pacman(&tg_user_dir, &manifest_dir);
+    }
 
     tg_user_dir
 }
@@ -258,4 +275,129 @@ fn ensure_workspace_table(dir: &PathBuf) {
 ", content))
             .unwrap_or_else(|err| panic!("failed to patch Cargo.toml in {}: {}", dir.display(), err));
     }
+}
+
+fn patch_tg_user_dependencies(dir: &PathBuf) {
+    let cargo_toml = dir.join("Cargo.toml");
+    let content = fs::read_to_string(&cargo_toml).unwrap_or_default();
+    let console_dep = if is_packaged_build() {
+        r#"[dependencies.tg-console]
+version = "0.4.8"
+package = "tg-rcore-tutorial-console""#
+    } else {
+        r#"[dependencies.tg-console]
+path = "../../tg-rcore-tutorial-console"
+version = "0.4.8"
+package = "tg-rcore-tutorial-console""#
+    };
+    let syscall_dep = if is_packaged_build() {
+        r#"[dependencies.tg-syscall]
+version = "0.0.1-preview.3"
+features = ["user"]
+package = "rosist-sallina-tg-rcore-tutorial-syscall-t3l3""#
+    } else {
+        r#"[dependencies.tg-syscall]
+path = "../../tg-rcore-tutorial-syscall"
+version = "0.0.1-preview.3"
+features = ["user"]
+package = "rosist-sallina-tg-rcore-tutorial-syscall-t3l3""#
+    };
+
+    let patched = content
+        .replace(
+            r#"[dependencies.tg-console]
+version = "0.4.2-preview.7"
+package = "tg-rcore-tutorial-console""#,
+            console_dep,
+        )
+        .replace(
+            r#"[dependencies.tg-console]
+path = "../../tg-rcore-tutorial-console"
+version = "0.4.8"
+package = "tg-rcore-tutorial-console""#,
+            console_dep,
+        )
+        .replace(
+            r#"[dependencies.tg-syscall]
+version = "0.4.2-preview.7"
+features = ["user"]
+package = "tg-rcore-tutorial-syscall""#,
+            syscall_dep,
+        )
+        .replace(
+            r#"[dependencies.tg-syscall]
+path = "../../tg-rcore-tutorial-syscall"
+version = "0.0.1-preview.3"
+features = ["user"]
+package = "rosist-sallina-tg-rcore-tutorial-syscall-t3l3""#,
+            syscall_dep,
+        )
+        .replace(
+            r#"[dependencies.tg-syscall]
+version = "0.0.1-preview.3"
+features = ["user"]
+package = "rosist-sallina-tg-rcore-tutorial-syscall-t3l3""#,
+            syscall_dep,
+        );
+
+    if patched != content {
+        fs::write(&cargo_toml, patched)
+            .unwrap_or_else(|err| panic!("failed to rewrite tg-user deps in {}: {}", dir.display(), err));
+    }
+}
+
+fn patch_tg_user_for_pacman(dir: &PathBuf, manifest_dir: &PathBuf) {
+    patch_tg_user_cases(dir);
+    patch_tg_user_manifest_for_pacman(dir);
+    copy_pacman_source(dir, manifest_dir);
+}
+
+fn patch_tg_user_cases(dir: &PathBuf) {
+    let cases_toml = dir.join("cases.toml");
+    let mut content = fs::read_to_string(&cases_toml).unwrap_or_default();
+    if !content.contains("[ch7_pacman]") {
+        content.push_str(
+            r#"
+
+[ch7_pacman]
+cases = [
+    "user_shell",
+    "initproc",
+    "pacman",
+]
+"#,
+        );
+        fs::write(&cases_toml, content)
+            .unwrap_or_else(|err| panic!("failed to patch cases.toml in {}: {}", dir.display(), err));
+    }
+}
+
+fn patch_tg_user_manifest_for_pacman(dir: &PathBuf) {
+    let cargo_toml = dir.join("Cargo.toml");
+    let mut content = fs::read_to_string(&cargo_toml).unwrap_or_default();
+    if !content.contains(r#"name = "pacman""#) {
+        content.push_str(
+            r#"
+
+[[bin]]
+name = "pacman"
+path = "src/bin/pacman.rs"
+"#,
+        );
+        fs::write(&cargo_toml, content)
+            .unwrap_or_else(|err| panic!("failed to append pacman bin in {}: {}", dir.display(), err));
+    }
+}
+
+fn copy_pacman_source(dir: &PathBuf, manifest_dir: &PathBuf) {
+    let src = manifest_dir.join("templates").join("pacman.rs");
+    let dst = dir.join("src/bin/pacman.rs");
+    fs::copy(&src, &dst).unwrap_or_else(|err| {
+        panic!(
+            "failed to copy pacman.rs from {} to {}: {}",
+            src.display(),
+            dst.display(),
+            err
+        )
+    });
 }

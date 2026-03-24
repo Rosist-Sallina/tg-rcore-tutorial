@@ -52,6 +52,8 @@ mod fs;
 mod process;
 /// 处理器模块：PROCESSOR 全局管理器
 mod processor;
+#[cfg(feature = "pacman")]
+mod virtio_gpu;
 /// VirtIO 块设备驱动
 mod virtio_block;
 
@@ -128,6 +130,12 @@ unsafe extern "C" fn _start() -> ! {
 
 /// 物理内存容量 = 48 MiB
 const MEMORY: usize = 48 << 20;
+#[cfg(feature = "pacman")]
+const UART_BASE: usize = 0x1000_0000;
+#[cfg(feature = "pacman")]
+const UART_RBR: usize = UART_BASE;
+#[cfg(feature = "pacman")]
+const UART_LSR: usize = UART_BASE + 5;
 
 /// 异界传送门所在虚页（虚拟地址空间最高页）
 const PROTAL_TRANSIT: VPN<Sv39> = VPN::MAX;
@@ -161,6 +169,11 @@ impl KernelSpace {
 static KERNEL_SPACE: KernelSpace = KernelSpace::new();
 
 /// VirtIO MMIO 设备地址范围
+#[cfg(feature = "pacman")]
+/// Pacman 图形模式下需要同时映射 UART、块设备和 GPU 三段 MMIO。
+pub const MMIO: &[(usize, usize)] = &[(0x1000_0000, 0x00_3000)];
+#[cfg(not(feature = "pacman"))]
+/// 默认章节模式下仅映射 VirtIO 块设备 MMIO。
 pub const MMIO: &[(usize, usize)] = &[(0x1000_1000, 0x00_1000)];
 
 /// 内核主函数——系统初始化和启动入口
@@ -200,6 +213,12 @@ extern "C" fn rust_main() -> ! {
     assert!(portal_layout.size() < 1 << Sv39::PAGE_BITS);
     // 步骤 5：建立内核地址空间并激活 Sv39 分页
     kernel_space(layout, MEMORY, portal_ptr as _);
+    #[cfg(feature = "pacman")]
+    {
+        virtio_gpu::init();
+        virtio_gpu::clear(virtio_gpu::rgb(0x00, 0x00, 0x00));
+        virtio_gpu::present();
+    }
     // 步骤 6：初始化异界传送门
     let portal = unsafe { MultislotPortal::init_transit(PROTAL_TRANSIT.base().val(), 1) };
     // 步骤 7：初始化系统调用处理器
@@ -346,6 +365,16 @@ fn map_portal(space: &AddressSpace<Sv39, Sv39Manager>) {
     space.root()[portal_idx] = unsafe { KERNEL_SPACE.assume_init_ref() }.root()[portal_idx];
 }
 
+#[cfg(feature = "pacman")]
+fn uart_try_getchar() -> Option<u8> {
+    let lsr = unsafe { (UART_LSR as *const u8).read_volatile() };
+    if lsr & 1 == 0 {
+        None
+    } else {
+        Some(unsafe { (UART_RBR as *const u8).read_volatile() })
+    }
+}
+
 /// 各种接口库的实现
 ///
 /// 本模块为 tg-syscall 提供的各个 trait 提供具体实现。
@@ -361,6 +390,8 @@ mod impls {
         processor::ProcManager,
         Sv39, PROCESSOR,
     };
+    #[cfg(feature = "pacman")]
+    use crate::{uart_try_getchar, virtio_gpu};
     use alloc::{alloc::alloc_zeroed, string::String, vec::Vec};
     use core::{alloc::Layout, ptr::NonNull};
     use spin::Mutex;
@@ -534,6 +565,18 @@ mod impls {
             }
         }
 
+        #[inline]
+        fn input_try_getchar(&self, _caller: Caller) -> isize {
+            #[cfg(feature = "pacman")]
+            {
+                uart_try_getchar().map_or(-1, |c| c as isize)
+            }
+            #[cfg(not(feature = "pacman"))]
+            {
+                -1
+            }
+        }
+
         /// open 系统调用：打开文件（与第六章相同，但 fd_table 中存 Fd::File）
         fn open(&self, _caller: Caller, path: usize, flags: usize) -> isize {
             let current = PROCESSOR.get_mut().current().unwrap();
@@ -623,6 +666,64 @@ mod impls {
                 .fd_table
                 .push(Some(Mutex::new(Fd::PipeWrite(write_end))));
             0
+        }
+
+        #[inline]
+        fn fb_info(&self, _caller: Caller, info: usize) -> isize {
+            #[cfg(feature = "pacman")]
+            {
+                let current = PROCESSOR.get_mut().current().unwrap();
+                if let Some(mut ptr) = current
+                    .address_space
+                    .translate::<FrameBufferInfo>(VAddr::new(info), WRITEABLE)
+                {
+                    *unsafe { ptr.as_mut() } = virtio_gpu::info();
+                    0
+                } else {
+                    log::error!("fb_info ptr not writeable");
+                    -1
+                }
+            }
+            #[cfg(not(feature = "pacman"))]
+            {
+                let _ = info;
+                -1
+            }
+        }
+
+        #[inline]
+        fn fb_fill_rect(
+            &self,
+            _caller: Caller,
+            x: usize,
+            y: usize,
+            w: usize,
+            h: usize,
+            color: u32,
+        ) -> isize {
+            #[cfg(feature = "pacman")]
+            {
+                virtio_gpu::fill_rect(x, y, w, h, color);
+                0
+            }
+            #[cfg(not(feature = "pacman"))]
+            {
+                let _ = (x, y, w, h, color);
+                -1
+            }
+        }
+
+        #[inline]
+        fn fb_present(&self, _caller: Caller) -> isize {
+            #[cfg(feature = "pacman")]
+            {
+                virtio_gpu::present();
+                0
+            }
+            #[cfg(not(feature = "pacman"))]
+            {
+                -1
+            }
         }
     }
 
