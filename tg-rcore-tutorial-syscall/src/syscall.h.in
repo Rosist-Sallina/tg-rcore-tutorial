@@ -324,6 +324,9 @@
 #define __NR_fb_info 501
 #define __NR_fb_fill_rect 502
 #define __NR_fb_present 503
+#define __NR_mailbox_create 504
+#define __NR_mailbox_send 505
+#define __NR_mailbox_recv 506
 
 
 // #define __NR_sysriscv __NR_arch_specific_syscall

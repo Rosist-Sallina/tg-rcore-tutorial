@@ -51,6 +51,24 @@ pub fn fb_present() -> isize {
     unsafe { syscall0(SyscallId::FB_PRESENT) }
 }
 
+/// 创建一个最小 mailbox。
+#[inline]
+pub fn mailbox_create() -> isize {
+    unsafe { syscall0(SyscallId::MAILBOX_CREATE) }
+}
+
+/// 向 mailbox 发送一个事件值。
+#[inline]
+pub fn mailbox_send(mailbox_id: usize, value: usize) -> isize {
+    unsafe { syscall2(SyscallId::MAILBOX_SEND, mailbox_id, value) }
+}
+
+/// 从 mailbox 非阻塞接收一个事件值。
+#[inline]
+pub fn mailbox_recv(mailbox_id: usize) -> isize {
+    unsafe { syscall1(SyscallId::MAILBOX_RECV, mailbox_id) }
+}
+
 bitflags! {
     pub struct OpenFlags: u32 {
         const RDONLY = 0;

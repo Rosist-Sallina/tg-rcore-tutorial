@@ -43,6 +43,8 @@
 mod process;
 /// 处理器模块：定义 PROCESSOR 全局变量和进程管理器 ProcManager
 mod processor;
+#[cfg(feature = "pong")]
+mod virtio_gpu;
 
 #[macro_use]
 extern crate tg_console;
@@ -124,6 +126,16 @@ unsafe extern "C" fn _start() -> ! {
 
 /// 物理内存容量 = 48 MiB
 const MEMORY: usize = 48 << 20;
+#[cfg(feature = "pong")]
+const UART_BASE: usize = 0x1000_0000;
+#[cfg(feature = "pong")]
+const UART_RBR: usize = UART_BASE;
+#[cfg(feature = "pong")]
+const UART_LSR: usize = UART_BASE + 5;
+#[cfg(feature = "pong")]
+const MMIO_START: usize = 0x1000_0000;
+#[cfg(feature = "pong")]
+const MMIO_END: usize = 0x1000_2000;
 
 /// 异界传送门所在虚页（虚拟地址空间最高页）
 ///
@@ -218,6 +230,12 @@ extern "C" fn rust_main() -> ! {
     assert!(portal_layout.size() < 1 << Sv39::PAGE_BITS);
     // 步骤 5：建立内核地址空间并激活 Sv39 分页
     kernel_space(layout, MEMORY, portal_ptr as _);
+    #[cfg(feature = "pong")]
+    {
+        virtio_gpu::init();
+        virtio_gpu::clear(virtio_gpu::rgb(0x00, 0x00, 0x00));
+        virtio_gpu::present();
+    }
     // 步骤 6：初始化异界传送门（设置传送门页面的虚拟地址和 slot 数量）
     let portal = unsafe { MultislotPortal::init_transit(PROTAL_TRANSIT.base().val(), 1) };
     // 步骤 7：初始化系统调用处理器
@@ -336,6 +354,17 @@ fn kernel_space(layout: tg_linker::KernelLayout, memory: usize, portal: usize) {
         PPN::new(s.floor().val()),
         build_flags("_WRV"),
     );
+    #[cfg(feature = "pong")]
+    {
+        let s = VAddr::<Sv39>::new(MMIO_START);
+        let e = VAddr::<Sv39>::new(MMIO_END);
+        log::info!("(mmio)   ---> {:#10x}..{:#10x}", s.val(), e.val());
+        space.map_extern(
+            s.floor()..e.ceil(),
+            PPN::new(s.floor().val()),
+            build_flags("_WRV"),
+        );
+    }
     // 映射异界传送门页面到虚拟地址空间最高页
     // 标志位 __G_XWRV：全局、可执行、可写、可读、有效
     space.map_extern(
@@ -359,6 +388,16 @@ fn map_portal(space: &AddressSpace<Sv39, Sv39Manager>) {
     space.root()[portal_idx] = unsafe { KERNEL_SPACE.assume_init_ref() }.root()[portal_idx];
 }
 
+#[cfg(feature = "pong")]
+fn uart_try_getchar() -> Option<u8> {
+    let lsr = unsafe { (UART_LSR as *const u8).read_volatile() };
+    if lsr & 1 == 0 {
+        None
+    } else {
+        Some(unsafe { (UART_RBR as *const u8).read_volatile() })
+    }
+}
+
 /// 各种接口库的实现
 ///
 /// 本模块为 tg-syscall 提供的各个 trait 提供具体实现，
@@ -367,8 +406,18 @@ mod impls {
     use crate::{
         build_flags, process::Process as ProcStruct, processor::ProcManager, Sv39, APPS, PROCESSOR,
     };
-    use alloc::alloc::alloc_zeroed;
-    use core::{alloc::Layout, ptr::NonNull};
+    #[cfg(feature = "pong")]
+    use crate::{uart_try_getchar, virtio_gpu};
+    use alloc::{
+        alloc::alloc_zeroed,
+        collections::{BTreeMap, VecDeque},
+    };
+    use core::{
+        alloc::Layout,
+        ptr::NonNull,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+    use spin::{Lazy, Mutex};
     use tg_console::log;
     use tg_kernel_vm::{
         page_table::{MmuMeta, Pte, VAddr, VmFlags, PPN, VPN},
@@ -476,6 +525,15 @@ mod impls {
     /// 系统调用上下文，实现 IO、Process、Scheduling、Clock、Memory 等 trait
     pub struct SyscallContext;
 
+    const MAILBOX_CAPACITY: usize = 64;
+    struct Mailbox {
+        queue: VecDeque<usize>,
+    }
+
+    static MAILBOXES: Lazy<Mutex<BTreeMap<usize, Mailbox>>> =
+        Lazy::new(|| Mutex::new(BTreeMap::new()));
+    static NEXT_MAILBOX_ID: AtomicUsize = AtomicUsize::new(0);
+
     /// IO 系统调用实现：write 和 read
     impl IO for SyscallContext {
         /// write 系统调用：将数据写入标准输出
@@ -544,6 +602,113 @@ mod impls {
                 log::error!("unsupported fd: {fd}");
                 -1
             }
+        }
+
+        #[inline]
+        fn input_try_getchar(&self, _caller: Caller) -> isize {
+            #[cfg(feature = "pong")]
+            {
+                uart_try_getchar().map_or(-1, |c| c as isize)
+            }
+            #[cfg(not(feature = "pong"))]
+            {
+                -1
+            }
+        }
+
+        #[inline]
+        fn fb_info(&self, _caller: Caller, info: usize) -> isize {
+            #[cfg(feature = "pong")]
+            {
+                const WRITABLE: VmFlags<Sv39> = build_flags("W_V");
+                if let Some(mut ptr) = PROCESSOR
+                    .get_mut()
+                    .current()
+                    .unwrap()
+                    .address_space
+                    .translate::<FrameBufferInfo>(VAddr::new(info), WRITABLE)
+                {
+                    *unsafe { ptr.as_mut() } = virtio_gpu::info();
+                    0
+                } else {
+                    log::error!("fb_info ptr not writeable");
+                    -1
+                }
+            }
+            #[cfg(not(feature = "pong"))]
+            {
+                let _ = info;
+                -1
+            }
+        }
+
+        #[inline]
+        fn fb_fill_rect(
+            &self,
+            _caller: Caller,
+            x: usize,
+            y: usize,
+            w: usize,
+            h: usize,
+            color: u32,
+        ) -> isize {
+            #[cfg(feature = "pong")]
+            {
+                virtio_gpu::fill_rect(x, y, w, h, color);
+                0
+            }
+            #[cfg(not(feature = "pong"))]
+            {
+                let _ = (x, y, w, h, color);
+                -1
+            }
+        }
+
+        #[inline]
+        fn fb_present(&self, _caller: Caller) -> isize {
+            #[cfg(feature = "pong")]
+            {
+                virtio_gpu::present();
+                0
+            }
+            #[cfg(not(feature = "pong"))]
+            {
+                -1
+            }
+        }
+
+        fn mailbox_create(&self, _caller: Caller) -> isize {
+            let id = NEXT_MAILBOX_ID.fetch_add(1, Ordering::Relaxed);
+            MAILBOXES.lock().insert(
+                id,
+                Mailbox {
+                    queue: VecDeque::new(),
+                },
+            );
+            id as isize
+        }
+
+        fn mailbox_send(&self, _caller: Caller, mailbox_id: usize, value: usize) -> isize {
+            let mut mailboxes = MAILBOXES.lock();
+            let Some(mailbox) = mailboxes.get_mut(&mailbox_id) else {
+                return -1;
+            };
+            if mailbox.queue.len() >= MAILBOX_CAPACITY {
+                return -1;
+            }
+            mailbox.queue.push_back(value);
+            0
+        }
+
+        fn mailbox_recv(&self, _caller: Caller, mailbox_id: usize) -> isize {
+            let mut mailboxes = MAILBOXES.lock();
+            let Some(mailbox) = mailboxes.get_mut(&mailbox_id) else {
+                return -1;
+            };
+            mailbox
+                .queue
+                .pop_front()
+                .map_or(-1, |value| value as isize)
         }
     }
 

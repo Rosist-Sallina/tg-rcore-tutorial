@@ -32,6 +32,13 @@ pub struct VirtIOGpu<'a, H: Hal, T: Transport> {
 }
 
 impl<H: Hal, T: Transport> VirtIOGpu<'_, H, T> {
+    fn reclaim_used(queue: &mut VirtQueue<H>) -> Result {
+        while queue.can_pop() {
+            queue.pop_used()?;
+        }
+        Ok(())
+    }
+
     fn build(mut transport: T) -> Result<alloc::boxed::Box<Self>> {
         transport.begin_init(|features| {
             let features = Features::from_bits_truncate(features);
@@ -39,8 +46,8 @@ impl<H: Hal, T: Transport> VirtIOGpu<'_, H, T> {
             (features & supported_features).bits()
         });
 
-        let control_queue = VirtQueue::new(&mut transport, QUEUE_TRANSMIT, 8)?;
-        let cursor_queue = VirtQueue::new(&mut transport, QUEUE_CURSOR, 8)?;
+        let control_queue = VirtQueue::new(&mut transport, QUEUE_TRANSMIT, 32)?;
+        let cursor_queue = VirtQueue::new(&mut transport, QUEUE_CURSOR, 32)?;
 
         let queue_buf_dma = DMA::new(2)?;
         let queue_buf_send = unsafe { &mut queue_buf_dma.as_buf()[..PAGE_SIZE] };
@@ -160,11 +167,17 @@ impl<H: Hal, T: Transport> VirtIOGpu<'_, H, T> {
 
     /// Send a request to the device and block for a response.
     fn request<Req, Rsp>(&mut self, req: Req) -> Result<Rsp> {
+        Self::reclaim_used(&mut self.control_queue)?;
         unsafe {
             (self.queue_buf_send.as_mut_ptr() as *mut Req).write(req);
         }
-        self.control_queue
-            .add(&[self.queue_buf_send], &[self.queue_buf_recv])?;
+        if let Err(Error::BufferTooSmall) =
+            self.control_queue.add(&[self.queue_buf_send], &[self.queue_buf_recv])
+        {
+            Self::reclaim_used(&mut self.control_queue)?;
+            self.control_queue
+                .add(&[self.queue_buf_send], &[self.queue_buf_recv])?;
+        }
         self.transport.notify(QUEUE_TRANSMIT as u32);
         while !self.control_queue.can_pop() {
             spin_loop();
@@ -175,10 +188,14 @@ impl<H: Hal, T: Transport> VirtIOGpu<'_, H, T> {
 
     /// Send a mouse cursor operation request to the device and block for a response.
     fn cursor_request<Req>(&mut self, req: Req) -> Result {
+        Self::reclaim_used(&mut self.cursor_queue)?;
         unsafe {
             (self.queue_buf_send.as_mut_ptr() as *mut Req).write(req);
         }
-        self.cursor_queue.add(&[self.queue_buf_send], &[])?;
+        if let Err(Error::BufferTooSmall) = self.cursor_queue.add(&[self.queue_buf_send], &[]) {
+            Self::reclaim_used(&mut self.cursor_queue)?;
+            self.cursor_queue.add(&[self.queue_buf_send], &[])?;
+        }
         self.transport.notify(QUEUE_CURSOR as u32);
         while !self.cursor_queue.can_pop() {
             spin_loop();

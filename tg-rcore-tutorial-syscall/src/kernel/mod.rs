@@ -91,6 +91,15 @@ pub trait IO: Sync {
     fn fb_present(&self, caller: Caller) -> isize {
         unimplemented!()
     }
+    fn mailbox_create(&self, caller: Caller) -> isize {
+        unimplemented!()
+    }
+    fn mailbox_send(&self, caller: Caller, mailbox_id: usize, value: usize) -> isize {
+        unimplemented!()
+    }
+    fn mailbox_recv(&self, caller: Caller, mailbox_id: usize) -> isize {
+        unimplemented!()
+    }
 }
 
 pub trait Memory: Sync {
@@ -285,6 +294,9 @@ pub fn handle(caller: Caller, id: SyscallId, args: [usize; 6]) -> SyscallResult 
             io.fb_fill_rect(caller, args[0], args[1], args[2], args[3], args[4] as u32)
         }),
         Id::FB_PRESENT => IO.call(id, |io| io.fb_present(caller)),
+        Id::MAILBOX_CREATE => IO.call(id, |io| io.mailbox_create(caller)),
+        Id::MAILBOX_SEND => IO.call(id, |io| io.mailbox_send(caller, args[0], args[1])),
+        Id::MAILBOX_RECV => IO.call(id, |io| io.mailbox_recv(caller, args[0])),
         Id::EXIT => PROCESS.call(id, |proc| proc.exit(caller, args[0])),
         Id::CLONE => PROCESS.call(id, |proc| proc.fork(caller)),
         Id::EXECVE => PROCESS.call(id, |proc| proc.exec(caller, args[0], args[1])),

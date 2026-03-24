@@ -4,24 +4,27 @@
 
 ## 学生提交信息
 
-- crate 名称：`rosist-sallina-tg-rcore-tutorial-T1L3`
-- crate 版本：`0.0.1-preview.2`
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-T3L5`
+- crate 版本：`0.0.1-preview.1`
+- 依赖 crate：`rosist-sallina-tg-rcore-tutorial-syscall-t3l3`
+- 依赖 crate：`rosist-sallina-tg-rcore-tutorial-virtio-drivers-t3l3`
+- 用户程序来源：构建时从官方 `tg-rcore-tutorial-user` 注入 `pong`
 - 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
 - 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-ch5`
-- 建议 tag：`rosist-sallina-tg-rcore-tutorial-T1L3-v0.0.1-preview.2`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-T3L5-v0.0.1-preview.1`
 
 复现方式：
 
 ```bash
-cargo clone rosist-sallina-tg-rcore-tutorial-T1L3
-cd rosist-sallina-tg-rcore-tutorial-T1L3
-cargo run --features exercise
+cargo clone rosist-sallina-tg-rcore-tutorial-T3L5
+cd rosist-sallina-tg-rcore-tutorial-T3L5
+./run_pong.sh
 ```
 
 ```bash
 git clone https://github.com/Rosist-Sallina/tg-rcore-tutorial.git
 cd tg-rcore-tutorial/tg-rcore-tutorial-ch5
-cargo run --features exercise
+./run_pong.sh
 ```
 
 通过本章的学习和实践，你将理解：
