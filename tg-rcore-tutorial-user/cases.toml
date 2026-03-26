@@ -171,6 +171,19 @@ cases = [
     "initproc",
 ]
 
+[ch9]
+cases = [
+    "00hello_world",
+    "vm_touch",
+    "vm_swap",
+    "vm_prot",
+]
+
+[ch9_exercise]
+cases = [
+    "vm_bench",
+]
+
 [ch3_exercise]
 base = 0x8040_0000
 step = 0x0020_0000

@@ -7,15 +7,15 @@
 
 本实验教程的目标：学生与AI充分合作，按章节学习操作系统内核的逐步演进过程，或按组件视角学习操作系统内核的总体架构和功能组成，从而能够把操作系统的原理概率与设计实现关联起来，并掌握操作系统的系统架构级设计能力。  
 
-本实验教程的任务：请看`rcore-tutorial-ch[1-8]`中的`README.md`中的`## 练习任务`小节的内容，了解并完成基础级和扩展级的任务要求。对于能力强的同学，请看`docs\challenges.md`的内容，了解并完成挑战级的任务要求。
+本实验教程的任务：请看`rcore-tutorial-ch[1-9]`中的`README.md`中的`## 练习任务`小节的内容，了解并完成基础级和扩展级的任务要求。对于能力强的同学，请看`docs\challenges.md`的内容，了解并完成挑战级的任务要求。
 
 汇总仓库包含：
 
-- `tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch8`：tg-rcore-tutorial-ch[1-8] 8 个渐进章节（每章是一个可独立运行的内核 crate + 指导文档）
+- `tg-rcore-tutorial-ch1~tg-rcore-tutorial-ch9`：tg-rcore-tutorial-ch[1-9] 9 个渐进章节（每章是一个可独立运行的内核 crate + 指导文档）
 - `tg-*`：可复用内核组件 crate（内存、虚存、上下文、同步、信号、文件系统等）
 - `tg-rcore-tutorial-user`：用户态测试程序集合
 - `tg-rcore-tutorial-checker`：测试输出检测工具
-- `tg-rcore-tutorial-linker`：为 ch1~ch8的rCore Tutorial教学操作系统内核提供链接脚本生成功能
+- `tg-rcore-tutorial-linker`：为 ch1~ch9 的 rCore Tutorial 教学操作系统内核提供链接脚本生成功能
 
 **本实验教程是[AI4OSE（AI for Operating System Engineering）的Lab1](https://crates.io/crates/ai4ose-lab1-2026s)。**
 
@@ -128,7 +128,7 @@ cargo build --features exercise
 
 | 路径 | 作用 | 你通常在什么时候用 |
 |---|---|---|
-| `tg-rcore-tutorial-ch[1-8]` | 8个章节的内核 + 实验指导 | 按课程顺序学习、做章节实验 |
+| `tg-rcore-tutorial-ch[1-9]` | 9个章节的内核 + 实验指导 | 按课程顺序学习、做章节实验 |
 | `tg-rcore-tutorial-console` | 控制台输出与日志 | 需要统一日志/输出接口 |
 | `tg-rcore-tutorial-linker` | 链接脚本生成工具 | 构建内核镜像、管理链接符号 |
 | `tg-rcore-tutorial-sbi` | SBI 封装（含 `nobios` 支持） | 与固件/定时器/关机交互 |
@@ -179,6 +179,7 @@ cargo build --features exercise
 | `tg-rcore-tutorial-ch6` | 文件系统 | `cargo run` | `cargo run --features exercise` |
 | `tg-rcore-tutorial-ch7` | IPC（pipe/signal） | `cargo run` | 基础测试为主 |
 | `tg-rcore-tutorial-ch8` | 线程与并发同步 | `cargo run` | `cargo run --features exercise` |
+| `tg-rcore-tutorial-ch9` | 虚拟内存算法 | `cargo run` | `cargo run --features exercise` |
 
 5 个常见练习章：`tg-rcore-tutorial-ch[34568]`。
 
@@ -198,6 +199,7 @@ cargo build --features exercise
 | [`ch6`](tg-rcore-tutorial-ch6/README.md#source-nav) | `src/virtio_block.rs` -> `src/fs.rs` -> `src/main.rs` | 块设备到文件系统，再到 fd 系统调用 |
 | [`ch7`](tg-rcore-tutorial-ch7/README.md#source-nav) | `src/fs.rs` -> `src/process.rs` -> `src/main.rs` | 管道统一 fd 抽象 + 信号处理 |
 | [`ch8`](tg-rcore-tutorial-ch8/README.md#source-nav) | `src/process.rs` -> `src/processor.rs` -> `src/main.rs` | 线程化调度 + 同步原语阻塞/唤醒 |
+| [`ch9`](tg-rcore-tutorial-ch9/README.md#source-nav) | `src/pager.rs` -> `src/process.rs` -> `src/main.rs` | 缺页处理 + 页面置换 + 工作集/抖动统计 |
 
 ## 4. 常用开发与测试流程
 

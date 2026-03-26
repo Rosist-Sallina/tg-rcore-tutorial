@@ -83,6 +83,12 @@ impl<Meta: VmMeta, M: PageManager<Meta>> AddressSpace<Meta, M> {
         self.map_extern(range, self.page_manager.v_to_p(page), flags)
     }
 
+    /// 建立单页外部映射。
+    #[inline]
+    pub fn map_page_extern(&mut self, vpn: VPN<Meta>, ppn: PPN<Meta>, flags: VmFlags<Meta>) {
+        self.map_extern(vpn..vpn + 1, ppn, flags);
+    }
+
     /// 取消指定 VPN 范围的映射
     pub fn unmap(&mut self, range: Range<VPN<Meta>>) {
         // 教学提醒：这里主要做“撤销页表映射”，并未回收物理页到分配器。
@@ -128,6 +134,12 @@ impl<Meta: VmMeta, M: PageManager<Meta>> AddressSpace<Meta, M> {
         };
     }
 
+    /// 取消单页映射。
+    #[inline]
+    pub fn unmap_page(&mut self, vpn: VPN<Meta>) {
+        self.unmap(vpn..vpn + 1);
+    }
+
     /// 查找指定 VPN 的 PTE 指针（用于修改）
     fn find_pte_mut(&self, vpn: VPN<Meta>) -> Option<*mut page_table::Pte<Meta>> {
         let mut current = self.page_manager.root_ptr();
@@ -156,6 +168,37 @@ impl<Meta: VmMeta, M: PageManager<Meta>> AddressSpace<Meta, M> {
             current = self.page_manager.p_to_v(pte.ppn());
         }
         None
+    }
+
+    /// 查询指定虚页对应的有效页表项。
+    pub fn pte_of(&self, vpn: VPN<Meta>) -> Option<page_table::Pte<Meta>> {
+        let pte_ptr = self.find_pte_mut(vpn)?;
+        let pte = unsafe { *pte_ptr };
+        pte.is_valid().then_some(pte)
+    }
+
+    /// 更新指定虚页的页表标志位。
+    pub fn update_pte_flags(
+        &self,
+        vpn: VPN<Meta>,
+        set: VmFlags<Meta>,
+        clear: VmFlags<Meta>,
+    ) -> bool {
+        let Some(pte_ptr) = self.find_pte_mut(vpn) else {
+            return false;
+        };
+        let pte = unsafe { *pte_ptr };
+        if !pte.is_valid() {
+            return false;
+        }
+        let raw = (pte.flags().val() | set.val()) & !clear.val();
+        let flags = unsafe { VmFlags::from_raw(raw) };
+        unsafe { *pte_ptr = flags.build_pte(pte.ppn()) };
+        #[cfg(target_arch = "riscv64")]
+        unsafe {
+            core::arch::asm!("sfence.vma {}, zero", in(reg) vpn.base().val())
+        };
+        true
     }
 
     /// 检查 `flags` 的属性要求，然后将地址空间中的一个虚地址翻译成当前地址空间中的指针。

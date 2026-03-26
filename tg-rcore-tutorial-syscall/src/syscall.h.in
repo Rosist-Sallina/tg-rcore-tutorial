@@ -327,6 +327,7 @@
 #define __NR_mailbox_create 504
 #define __NR_mailbox_send 505
 #define __NR_mailbox_recv 506
+#define __NR_vmctl 507
 
 
 // #define __NR_sysriscv __NR_arch_specific_syscall

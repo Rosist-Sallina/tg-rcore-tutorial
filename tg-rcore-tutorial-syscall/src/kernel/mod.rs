@@ -119,6 +119,10 @@ pub trait Memory: Sync {
     fn munmap(&self, caller: Caller, addr: usize, length: usize) -> isize {
         unimplemented!()
     }
+
+    fn vmctl(&self, caller: Caller, cmd: usize, arg0: usize, arg1: usize) -> isize {
+        unimplemented!()
+    }
 }
 
 pub trait Scheduling: Sync {
@@ -311,6 +315,7 @@ pub fn handle(caller: Caller, id: SyscallId, args: [usize; 6]) -> SyscallResult 
             let [addr, length, prot, flags, fd, offset] = args;
             memory.mmap(caller, addr, length, prot as _, flags as _, fd as _, offset)
         }),
+        Id::VMCTL => MEMORY.call(id, |memory| memory.vmctl(caller, args[0], args[1], args[2])),
         Id::KILL => SIGNAL.call(id, |signal| signal.kill(caller, args[0] as _, args[1] as _)),
         Id::RT_SIGACTION => SIGNAL.call(id, |signal| {
             signal.sigaction(caller, args[0] as _, args[1], args[2])

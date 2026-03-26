@@ -1,4 +1,7 @@
-use crate::{ClockId, FrameBufferInfo, SignalAction, SignalNo, Stat, SyscallId, TimeSpec};
+use crate::{
+    ClockId, FrameBufferInfo, SignalAction, SignalNo, Stat, SyscallId, TimeSpec, VmAlgo, VmStats,
+    VMCTL_GET_STATS, VMCTL_RESET_STATS, VMCTL_SET_ALGO, VMCTL_SET_QUOTA,
+};
 use bitflags::*;
 use native::*;
 
@@ -377,6 +380,36 @@ pub fn mmap(start: usize, len: usize, prot: usize) -> isize {
 pub fn munmap(start: usize, len: usize) -> isize {
     // SAFETY: 系统调用参数是简单的整数值
     unsafe { syscall2(SyscallId::MUNMAP, start, len) }
+}
+
+/// 虚拟内存实验控制接口。
+#[inline]
+pub fn vmctl(cmd: usize, arg0: usize, arg1: usize) -> isize {
+    unsafe { syscall3(SyscallId::VMCTL, cmd, arg0, arg1) }
+}
+
+/// 设置页面置换算法。
+#[inline]
+pub fn vm_set_algo(algo: VmAlgo) -> isize {
+    vmctl(VMCTL_SET_ALGO, algo as usize, 0)
+}
+
+/// 设置当前进程的常驻页配额。
+#[inline]
+pub fn vm_set_quota(quota: usize) -> isize {
+    vmctl(VMCTL_SET_QUOTA, quota, 0)
+}
+
+/// 重置当前进程虚存统计。
+#[inline]
+pub fn vm_reset_stats() -> isize {
+    vmctl(VMCTL_RESET_STATS, 0, 0)
+}
+
+/// 获取当前进程虚存统计。
+#[inline]
+pub fn vm_get_stats(stats: &mut VmStats) -> isize {
+    vmctl(VMCTL_GET_STATS, stats as *mut _ as usize, 0)
 }
 
 /// 创建管道

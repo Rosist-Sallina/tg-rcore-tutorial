@@ -1,0 +1,16 @@
+[build]
+target = "riscv64gc-unknown-none-elf"
+
+[target.riscv64gc-unknown-none-elf]
+runner = [
+    "qemu-system-riscv64",
+    "-machine", "virt",
+    "-nographic",
+    "-bios", "none",
+    "-kernel",
+]
+
+[env]
+TG_USER_CRATE = "rosist-sallina-tg-rcore-tutorial-user-t1l5"
+TG_USER_LOCAL_DIR = "tg-rcore-tutorial-user"
+TG_USER_VERSION = "0.0.1-preview.1"

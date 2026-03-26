@@ -3,12 +3,12 @@
 ## 学生提交信息
 
 - crate 名称：`rosist-sallina-tg-rcore-tutorial-syscall-t3l3`
-- crate 版本：`0.0.1-preview.3`
+- crate 版本：`0.0.1-preview.4`
 - 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
 - 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-syscall`
-- 建议 tag：`rosist-sallina-tg-rcore-tutorial-syscall-t3l3-v0.0.1-preview.3`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-syscall-t3l3-v0.0.1-preview.4`
 
-这个 crate 是 `ch3` 图形版贪吃蛇拓展实验的配套依赖，主要补了 framebuffer 和非阻塞输入相关 syscall。
+这个 crate 最初是 `ch3` 图形版贪吃蛇拓展实验的配套依赖，这个版本继续承接 `T2L6/ch9`，补了虚拟内存实验所需的 `vmctl` 接口与统计结构。
 
 [![Crates.io](https://img.shields.io/crates/v/tg-rcore-tutorial-syscall.svg)](https://crates.io/crates/tg-rcore-tutorial-syscall)
 [![Documentation](https://docs.rs/tg-rcore-tutorial-syscall/badge.svg)](https://docs.rs/tg-rcore-tutorial-syscall)
