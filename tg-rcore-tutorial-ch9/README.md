@@ -4,6 +4,7 @@
 
 - crate 名称：`rosist-sallina-tg-rcore-tutorial-T2L6`
 - crate 版本：`0.0.1-preview.1`
+- 依赖 crate：`rosist-sallina-tg-rcore-tutorial-kernel-vm-t2l6`
 - 依赖 crate：`rosist-sallina-tg-rcore-tutorial-syscall-t3l3`
 - 用户程序来源：构建时从 `rosist-sallina-tg-rcore-tutorial-user-t1l5` 注入 `vm_touch/vm_swap/vm_prot/vm_bench`
 - 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`

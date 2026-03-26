@@ -1,0 +1,17 @@
+[package]
+name = "rosist-sallina-tg-rcore-tutorial-kernel-vm-t2l6"
+description = "Student AI4OSE support crate for Chapter 9 of rCore Tutorial: kernel virtual memory helpers for page-fault handling and paging algorithms."
+version = "0.0.1-preview.1"
+edition = "2024"
+authors = ["Rosist_Sallina <sallinarosist@gmail.com>"]
+repository = "https://github.com/Rosist-Sallina/tg-rcore-tutorial"
+homepage = "https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-kernel-vm-t2l6"
+documentation = "https://docs.rs/rosist-sallina-tg-rcore-tutorial-kernel-vm-t2l6"
+license = "GPL-3.0"
+readme = "README.md"
+keywords = ["ai", "ai4ose", "kernel", "learning", "os"]
+categories = ["no-std", "embedded"]
+
+[dependencies]
+spin = "0.9"
+page-table = "0.0.6"

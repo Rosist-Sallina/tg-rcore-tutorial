@@ -33,7 +33,7 @@ tg-linker = { package = "tg-rcore-tutorial-linker", path = "../tg-rcore-tutorial
 tg-console = { package = "tg-rcore-tutorial-console", path = "../tg-rcore-tutorial-console", version = "0.4.8" }
 tg-kernel-context = { package = "tg-rcore-tutorial-kernel-context", path = "../tg-rcore-tutorial-kernel-context", version = "0.4.8", features = ["foreign"] }
 tg-kernel-alloc = { package = "tg-rcore-tutorial-kernel-alloc", path = "../tg-rcore-tutorial-kernel-alloc", version = "0.4.8" }
-tg-kernel-vm = { package = "tg-rcore-tutorial-kernel-vm", path = "../tg-rcore-tutorial-kernel-vm", version = "0.4.8" }
+tg-kernel-vm = { package = "rosist-sallina-tg-rcore-tutorial-kernel-vm-t2l6", path = "../tg-rcore-tutorial-kernel-vm-t2l6", version = "0.0.1-preview.1" }
 tg-syscall = { package = "rosist-sallina-tg-rcore-tutorial-syscall-t3l3", path = "../tg-rcore-tutorial-syscall", version = "0.0.1-preview.4", features = ["kernel"] }
 
 [build-dependencies]
