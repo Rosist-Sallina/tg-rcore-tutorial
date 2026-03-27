@@ -28,6 +28,8 @@
 
 // 任务管理模块：定义任务控制块（TCB）和调度事件
 mod task;
+#[cfg(feature = "smp")]
+mod smp;
 
 // 引入控制台输出宏（print! / println!），由 tg_console 库提供
 #[macro_use]
@@ -38,6 +40,7 @@ use impls::{Console, SyscallContext};
 // riscv 库：访问 RISC-V 控制状态寄存器（CSR），如 scause、sie、time
 use riscv::register::*;
 // 任务控制块
+#[cfg(not(feature = "smp"))]
 use task::TaskControlBlock;
 // 日志模块
 use tg_console::log;
@@ -69,6 +72,7 @@ unsafe extern "C" fn _start() -> ! {
     static mut STACK: [u8; STACK_SIZE] = [0u8; STACK_SIZE];
 
     core::arch::naked_asm!(
+        "mv tp, a0",
         "la sp, {stack} + {stack_size}",
         "j  {main}",
         stack = sym STACK,
@@ -104,13 +108,29 @@ extern "C" fn rust_main() -> ! {
     tg_syscall::init_trace(&SyscallContext);
 
     // 第四步：初始化任务控制块数组，加载所有用户程序
+    #[cfg(not(feature = "smp"))]
     let mut tcbs = [TaskControlBlock::ZERO; APP_CAPACITY];
     let mut index_mod = 0;
+    #[cfg(not(feature = "smp"))]
     for (i, app) in tg_linker::AppMeta::locate().iter().enumerate() {
         let entry = app.as_ptr() as usize;
         log::info!("load app{i} to {entry:#x}");
         tcbs[i].init(entry);
         index_mod += 1;
+    }
+    #[cfg(feature = "smp")]
+    {
+        tg_smp::hart::mark_hart_started(tg_smp::hart::hart_id());
+        let mut tcbs = smp::TCBS.lock();
+        for (i, app) in tg_linker::AppMeta::locate().iter().enumerate() {
+            let entry = app.as_ptr() as usize;
+            log::info!("load app{i} to {entry:#x}");
+            tcbs[i].init(entry);
+            index_mod += 1;
+        }
+        drop(tcbs);
+        smp::init_smp_scheduler(index_mod);
+        log::info!("[hart {}] smp scheduler initialized", tg_smp::hart::hart_id());
     }
     println!();
 
@@ -118,10 +138,20 @@ extern "C" fn rust_main() -> ! {
     // 这是实现抢占式调度的关键：允许时钟中断打断用户程序的执行
     unsafe { sie::set_stimer() };
 
+    #[cfg(feature = "smp")]
+    {
+        log::info!("[hart {}] entering boot_secondary", tg_smp::hart::hart_id());
+        smp::boot_secondary();
+        smp::schedule_loop();
+    }
+
     // ========== 多道程序主循环 ==========
     // 使用轮转调度算法（Round-Robin），依次执行各任务
+    #[cfg(not(feature = "smp"))]
     let mut remain = index_mod; // 剩余未完成的任务数
+    #[cfg(not(feature = "smp"))]
     let mut i = 0usize; // 当前任务索引
+    #[cfg(not(feature = "smp"))]
     while remain > 0 {
         let tcb = &mut tcbs[i];
         if !tcb.finish {
@@ -194,6 +224,7 @@ extern "C" fn rust_main() -> ! {
     }
 
     // 所有用户程序执行完毕，关机
+    #[cfg(not(feature = "smp"))]
     tg_sbi::shutdown(false)
 }
 

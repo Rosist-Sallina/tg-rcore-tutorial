@@ -42,7 +42,10 @@
 /// 进程模块：定义 Process 结构体及其方法（from_elf、fork、exec 等）
 mod process;
 /// 处理器模块：定义 PROCESSOR 全局变量和进程管理器 ProcManager
+#[cfg(not(feature = "smp"))]
 mod processor;
+#[cfg(feature = "smp")]
+mod smp;
 
 #[macro_use]
 extern crate tg_console;
@@ -52,8 +55,9 @@ extern crate alloc;
 use crate::{
     impls::{Console, Sv39Manager, SyscallContext},
     process::Process,
-    processor::{ProcManager, PROCESSOR},
 };
+#[cfg(not(feature = "smp"))]
+use crate::processor::{ProcManager, PROCESSOR};
 use alloc::{alloc::alloc, collections::BTreeMap};
 use core::{alloc::Layout, cell::UnsafeCell, ffi::CStr, mem::MaybeUninit};
 use riscv::register::*;
@@ -69,8 +73,12 @@ use tg_kernel_vm::{
     AddressSpace,
 };
 use tg_sbi;
+#[cfg(not(feature = "smp"))]
 use tg_syscall::Caller;
+#[cfg(not(feature = "smp"))]
 use tg_task_manage::{PManager, ProcId};
+#[cfg(feature = "smp")]
+use tg_task_manage::ProcId;
 use xmas_elf::ElfFile;
 
 /// 构建 VmFlags（虚拟内存标志位）。
@@ -114,6 +122,7 @@ unsafe extern "C" fn _start() -> ! {
     static mut STACK: [u8; STACK_SIZE] = [0u8; STACK_SIZE];
 
     core::arch::naked_asm!(
+        "mv tp, a0",
         "la sp, {stack} + {stack_size}",
         "j  {main}",
         stack = sym STACK,
@@ -212,14 +221,18 @@ extern "C" fn rust_main() -> ! {
         ))
     };
     // 步骤 4：分配异界传送门所需的物理页面
-    let portal_size = MultislotPortal::calculate_size(1);
+    #[cfg(feature = "smp")]
+    let portal_slots = smp::NUM_CPUS;
+    #[cfg(not(feature = "smp"))]
+    let portal_slots = 1;
+    let portal_size = MultislotPortal::calculate_size(portal_slots);
     let portal_layout = Layout::from_size_align(portal_size, 1 << Sv39::PAGE_BITS).unwrap();
     let portal_ptr = unsafe { alloc(portal_layout) };
     assert!(portal_layout.size() < 1 << Sv39::PAGE_BITS);
     // 步骤 5：建立内核地址空间并激活 Sv39 分页
     kernel_space(layout, MEMORY, portal_ptr as _);
     // 步骤 6：初始化异界传送门（设置传送门页面的虚拟地址和 slot 数量）
-    let portal = unsafe { MultislotPortal::init_transit(PROTAL_TRANSIT.base().val(), 1) };
+    let portal = unsafe { MultislotPortal::init_transit(PROTAL_TRANSIT.base().val(), portal_slots) };
     // 步骤 7：初始化系统调用处理器
     tg_syscall::init_io(&SyscallContext);
     tg_syscall::init_process(&SyscallContext);
@@ -228,17 +241,33 @@ extern "C" fn rust_main() -> ! {
     tg_syscall::init_memory(&SyscallContext);
     // 步骤 8：加载初始进程 initproc
     // initproc 是所有用户进程的祖先，它会 fork 出 shell 进程
-    let initproc_data = APPS.get("initproc").unwrap();
-    if let Some(process) = Process::from_elf(ElfFile::new(initproc_data).unwrap()) {
-        // 初始化进程管理器并添加 initproc
-        PROCESSOR.get_mut().set_manager(ProcManager::new());
-        PROCESSOR
-            .get_mut()
-            .add(process.pid, process, ProcId::from_usize(usize::MAX));
+    #[cfg(feature = "smp")]
+    {
+        tg_smp::hart::mark_hart_started(tg_smp::hart::hart_id());
+        let initproc_data = APPS.get("initproc").unwrap();
+        if let Some(process) = Process::from_elf(ElfFile::new(initproc_data).unwrap()) {
+            let pid = process.pid;
+            smp::SMP_PROCESSOR.add_process(pid, process, ProcId::from_usize(usize::MAX));
+        }
+        smp::SMP_PROCESSOR.set_kernel_satp(satp::read().bits());
+        smp::boot_secondary();
+        smp::schedule_loop(portal);
+    }
+
+    #[cfg(not(feature = "smp"))]
+    {
+        let initproc_data = APPS.get("initproc").unwrap();
+        if let Some(process) = Process::from_elf(ElfFile::new(initproc_data).unwrap()) {
+            PROCESSOR.get_mut().set_manager(ProcManager::new());
+            PROCESSOR
+                .get_mut()
+                .add(process.pid, process, ProcId::from_usize(usize::MAX));
+        }
     }
 
     // ─── 主调度循环 ───
     // 不断从进程管理器中取出就绪进程执行，直到所有进程结束
+    #[cfg(not(feature = "smp"))]
     loop {
         let processor: *mut PManager<Process, ProcManager> = PROCESSOR.get_mut() as *mut _;
         if let Some(task) = unsafe { (*processor).find_next() } {
@@ -288,6 +317,7 @@ extern "C" fn rust_main() -> ! {
         }
     }
     // 所有进程执行完毕，关机
+    #[cfg(not(feature = "smp"))]
     tg_sbi::shutdown(false)
 }
 
@@ -364,9 +394,11 @@ fn map_portal(space: &AddressSpace<Sv39, Sv39Manager>) {
 /// 本模块为 tg-syscall 提供的各个 trait 提供具体实现，
 /// 包括 IO、Process、Scheduling、Clock、Memory 等系统调用接口。
 mod impls {
-    use crate::{
-        build_flags, process::Process as ProcStruct, processor::ProcManager, Sv39, APPS, PROCESSOR,
-    };
+    use crate::{build_flags, process::Process as ProcStruct, Sv39, APPS};
+    #[cfg(not(feature = "smp"))]
+    use crate::{processor::ProcManager, PROCESSOR};
+    #[cfg(feature = "smp")]
+    use crate::smp::SMP_PROCESSOR;
     use alloc::alloc::alloc_zeroed;
     use core::{alloc::Layout, ptr::NonNull};
     use tg_console::log;
@@ -375,8 +407,46 @@ mod impls {
         PageManager,
     };
     use tg_syscall::*;
-    use tg_task_manage::{PManager, ProcId};
+    #[cfg(not(feature = "smp"))]
+    use tg_task_manage::PManager;
+    use tg_task_manage::ProcId;
     use xmas_elf::ElfFile;
+
+    fn current_process() -> &'static mut ProcStruct {
+        #[cfg(feature = "smp")]
+        {
+            let ptr = SMP_PROCESSOR.with_current(|process| process as *mut ProcStruct);
+            unsafe { &mut *ptr }
+        }
+        #[cfg(not(feature = "smp"))]
+        {
+            PROCESSOR.get_mut().current().unwrap()
+        }
+    }
+
+    fn add_process(pid: ProcId, child: ProcStruct, parent_pid: ProcId) {
+        #[cfg(feature = "smp")]
+        {
+            SMP_PROCESSOR.add_process(pid, child, parent_pid);
+        }
+        #[cfg(not(feature = "smp"))]
+        {
+            PROCESSOR.get_mut().add(pid, child, parent_pid);
+        }
+    }
+
+    fn wait_process(child_pid: ProcId) -> Option<(ProcId, isize)> {
+        #[cfg(feature = "smp")]
+        {
+            SMP_PROCESSOR.wait_current(child_pid)
+        }
+        #[cfg(not(feature = "smp"))]
+        {
+            let processor: *mut PManager<ProcStruct, ProcManager> =
+                PROCESSOR.get_mut() as *mut _;
+            unsafe { (*processor).wait(child_pid) }
+        }
+    }
 
     // ─── Sv39 页表管理器 ───
 
@@ -486,10 +556,7 @@ mod impls {
             match fd {
                 STDOUT | STDDEBUG => {
                     const READABLE: VmFlags<Sv39> = build_flags("RV");
-                    if let Some(ptr) = PROCESSOR
-                        .get_mut()
-                        .current()
-                        .unwrap()
+                    if let Some(ptr) = current_process()
                         .address_space
                         .translate::<u8>(VAddr::new(buf), READABLE)
                     {
@@ -520,16 +587,18 @@ mod impls {
         fn read(&self, _caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
             if fd == STDIN {
                 const WRITEABLE: VmFlags<Sv39> = build_flags("W_V");
-                if let Some(mut ptr) = PROCESSOR
-                    .get_mut()
-                    .current()
-                    .unwrap()
+                if let Some(mut ptr) = current_process()
                     .address_space
                     .translate::<u8>(VAddr::new(buf), WRITEABLE)
                 {
                     let mut ptr = unsafe { ptr.as_mut() } as *mut u8;
                     for _ in 0..count {
-                        let c = tg_sbi::console_getchar() as u8;
+                        let c = loop {
+                            let c = tg_sbi::console_getchar();
+                            if c != usize::MAX {
+                                break c as u8;
+                            }
+                        };
                         unsafe {
                             *ptr = c;
                             ptr = ptr.add(1);
@@ -563,6 +632,12 @@ mod impls {
         /// 复制父进程的完整地址空间（深拷贝页表和物理页面），
         /// 父进程返回子进程 PID，子进程返回 0。
         fn fork(&self, _caller: Caller) -> isize {
+            #[cfg(feature = "smp")]
+            {
+                return SMP_PROCESSOR.fork_current();
+            }
+            #[cfg(not(feature = "smp"))]
+            {
             let processor: *mut PManager<ProcStruct, ProcManager> = PROCESSOR.get_mut() as *mut _;
             let current = unsafe { (*processor).current().unwrap() };
             let parent_pid = current.pid; // 保存父进程 PID
@@ -575,6 +650,7 @@ mod impls {
             unsafe { (*processor).add(pid, child_proc, parent_pid) };
             // 父进程返回子进程 PID
             pid.get_usize() as isize
+            }
         }
 
         /// exec 系统调用：加载并执行新程序
@@ -583,7 +659,7 @@ mod impls {
         /// 替换当前进程的地址空间。
         fn exec(&self, _caller: Caller, path: usize, count: usize) -> isize {
             const READABLE: VmFlags<Sv39> = build_flags("RV");
-            let current = PROCESSOR.get_mut().current().unwrap();
+            let current = current_process();
             current
                 .address_space
                 .translate::<u8>(VAddr::new(path), READABLE)
@@ -612,12 +688,9 @@ mod impls {
         /// - pid > 0：等待指定 PID 的子进程
         /// 返回值：成功返回子进程 PID，无子进程返回 -1
         fn wait(&self, _caller: Caller, pid: isize, exit_code_ptr: usize) -> isize {
-            let processor: *mut PManager<ProcStruct, ProcManager> = PROCESSOR.get_mut() as *mut _;
-            let current = unsafe { (*processor).current().unwrap() };
+            let current = current_process();
             const WRITABLE: VmFlags<Sv39> = build_flags("W_V");
-            if let Some((dead_pid, exit_code)) =
-                unsafe { (*processor).wait(ProcId::from_usize(pid as usize)) }
-            {
+            if let Some((dead_pid, exit_code)) = wait_process(ProcId::from_usize(pid as usize)) {
                 // 将退出码写入用户空间指针（需地址翻译）
                 if let Some(mut ptr) = current
                     .address_space
@@ -634,7 +707,7 @@ mod impls {
 
         /// getpid 系统调用：获取当前进程 PID
         fn getpid(&self, _caller: Caller) -> isize {
-            let current = PROCESSOR.get_mut().current().unwrap();
+            let current = current_process();
             current.pid.get_usize() as _
         }
 
@@ -647,7 +720,7 @@ mod impls {
         fn spawn(&self, _caller: Caller, path: usize, count: usize) -> isize {
             const READABLE: VmFlags<Sv39> = build_flags("RV");
             let spawned = {
-                let current = PROCESSOR.get_mut().current().unwrap();
+                let current = current_process();
                 let parent_pid = current.pid; // 保存父进程 PID
 
                 current
@@ -669,7 +742,7 @@ mod impls {
                     },
                 |(parent_pid, child)| {
                     let pid = child.pid;
-                    PROCESSOR.get_mut().add(pid, child, parent_pid);
+                    add_process(pid, child, parent_pid);
                     pid.get_usize() as isize
                 },
             )
@@ -681,7 +754,7 @@ mod impls {
         /// - size < 0：收缩堆
         /// - size == 0：返回当前堆顶地址
         fn sbrk(&self, _caller: Caller, size: i32) -> isize {
-            let current = PROCESSOR.get_mut().current().unwrap();
+            let current = current_process();
             if let Some(old_brk) = current.change_program_brk(size as isize) {
                 old_brk as isize
             } else {
@@ -702,7 +775,7 @@ mod impls {
         ///
         /// TODO: 实现 set_priority 系统调用（练习题：stride 调度算法）
         fn set_priority(&self, _caller: Caller, prio: isize) -> isize {
-            let current = PROCESSOR.get_mut().current().unwrap();
+            let current = current_process();
             if prio >= 2{
                 current.priority = prio as usize;
                 return prio;
@@ -722,10 +795,7 @@ mod impls {
             const WRITABLE: VmFlags<Sv39> = build_flags("W_V");
             match clock_id {
                 ClockId::CLOCK_MONOTONIC => {
-                    if let Some(mut ptr) = PROCESSOR
-                        .get_mut()
-                        .current()
-                        .unwrap()
+                    if let Some(mut ptr) = current_process()
                         .address_space
                         .translate::<TimeSpec>(VAddr::new(tp), WRITABLE)
                     {
@@ -760,10 +830,8 @@ mod impls {
             _fd: i32,
             _offset: usize,
         ) -> isize {
-            PROCESSOR
-                .get_mut()
-                .current()
-                .and_then(|process| process.mmap_anonymous(addr, len, prot))
+            current_process()
+                .mmap_anonymous(addr, len, prot)
                 .map(|()| 0)
                 .unwrap_or(-1)
         }
@@ -772,10 +840,8 @@ mod impls {
         ///
         /// TODO: 实现 munmap 系统调用（练习题）
         fn munmap(&self, _caller: Caller, addr: usize, len: usize) -> isize {
-            PROCESSOR
-                .get_mut()
-                .current()
-                .and_then(|process| process.munmap_anonymous(addr, len))
+            current_process()
+                .munmap_anonymous(addr, len)
                 .map(|()| 0)
                 .unwrap_or(-1)
         }

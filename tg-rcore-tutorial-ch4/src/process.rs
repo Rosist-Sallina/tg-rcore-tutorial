@@ -59,6 +59,8 @@ pub struct Process {
     syscall_trace: [(usize, usize); SYSCALL_TRACE_CAPACITY],
 }
 
+unsafe impl Send for Process {}
+
 impl Process {
     /// 从 ELF 文件创建新进程。
     ///

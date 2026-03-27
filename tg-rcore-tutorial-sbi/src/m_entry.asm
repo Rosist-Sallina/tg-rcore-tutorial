@@ -1,11 +1,18 @@
 # `-bios none` 场景下的 M 态入口代码
 # 当 QEMU 使用 `-bios none` 启动时，该代码在 M 态最先执行（常见入口 0x80000000）
 
+    .equ M_STACK_SIZE, 4096 * 4
+    .equ CLINT_MSIP, 0x02000000
+
     .section .text.m_entry
     .globl _m_start
 _m_start:
-    # 1) 初始化 M 态栈
+    # 1) 初始化当前 hart 的 M 态栈
+    csrr t0, mhartid
     la sp, m_stack_top
+    li t1, M_STACK_SIZE
+    mul t1, t0, t1
+    sub sp, sp, t1
     # 将 M 态栈顶保存到 mscratch，后续陷阱处理时用于切换栈
     csrw mscratch, sp
 
@@ -13,15 +20,11 @@ _m_start:
     li t0, (1 << 11) | (1 << 7)
     csrw mstatus, t0
 
-    # 3) 设置 mepc 为 S 态入口（由章节内核提供的 _start）
-    la t0, _start
-    csrw mepc, t0
-
-    # 4) 设置 M 态陷阱向量
+    # 3) 设置 M 态陷阱向量
     la t0, m_trap_vector
     csrw mtvec, t0
 
-    # 5) 中断/异常委托给 S 态（但“来自 S 态的 ecall”不委托）
+    # 4) 中断/异常委托给 S 态（但“来自 S 态的 ecall”不委托）
     #    这样 S 态内核执行 SBI 调用时，仍会陷入 M 态由本文件处理
     li t0, 0xffff
     csrw mideleg, t0
@@ -31,17 +34,56 @@ _m_start:
     and t0, t0, t1
     csrw medeleg, t0
 
-    # 6) 配置 PMP：允许 S 态访问全部物理地址空间（教学简化）
+    # 5) 配置 PMP：允许 S 态访问全部物理地址空间（教学简化）
     li t0, -1
     csrw pmpaddr0, t0
     li t0, 0x0f         # TOR 模式 + RWX
     csrw pmpcfg0, t0
 
-    # 7) 允许 S 态读取计数器（如 time）
+    # 6) 允许 S 态读取计数器（如 time）
     li t0, -1
     csrw mcounteren, t0
 
-    # 8) mret 切到 S 态，开始执行章节内核入口
+    csrr t0, mhartid
+    beqz t0, boot_primary
+    j park_secondary
+
+boot_primary:
+    # 7) 设置 mepc 为 S 态入口（由章节内核提供的 _start）
+    la t0, _start
+    csrw mepc, t0
+
+    # 8) a0=hartid, a1=0 后返回到 S 态
+    li a0, 0
+    li a1, 0
+    mret
+
+park_secondary:
+    csrr t0, mhartid
+    slli t1, t0, 3
+1:
+    la t2, MSBI_HART_STATE
+    add t2, t2, t1
+    ld t3, 0(t2)
+    bnez t3, 2f
+    wfi
+    j 1b
+2:
+    li t4, CLINT_MSIP
+    slli t5, t0, 2
+    add t4, t4, t5
+    sw zero, 0(t4)
+
+    la t4, MSBI_HART_START_ADDR
+    add t4, t4, t1
+    ld t5, 0(t4)
+    la t6, MSBI_HART_OPAQUE
+    add t6, t6, t1
+    ld a1, 0(t6)
+    mv a0, t0
+    sd zero, 0(t2)
+    csrw mepc, t5
+    fence.i
     mret
 
     .section .text.m_trap
@@ -97,8 +139,8 @@ m_trap_vector:
     .section .bss.m_stack
     .globl m_stack_lower_bound
 m_stack_lower_bound:
-    # M 态专用栈（16 KiB）
-    .space 4096 * 4
+    # M 态专用栈（每 hart 16 KiB，当前最多 2 个 hart）
+    .space M_STACK_SIZE * 2
     .globl m_stack_top
 m_stack_top:
 

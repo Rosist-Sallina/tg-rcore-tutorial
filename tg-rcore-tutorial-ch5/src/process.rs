@@ -53,8 +53,11 @@ pub struct Process {
 
     pub priority: usize,
 
+    #[cfg_attr(feature = "smp", allow(dead_code))]
     pub stride: usize,
 }
+
+unsafe impl Send for Process {}
 
 impl Process {
     const PAGE_SIZE: usize = 1 << Sv39::PAGE_BITS;

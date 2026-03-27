@@ -42,7 +42,7 @@ fn should_skip_build_apps() -> bool {
 
 fn write_linker() {
     let ld = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("linker.ld");
-    fs::write(&ld, tg_linker::NOBIOS_SCRIPT).unwrap_or_else(|err| {
+    fs::write(&ld, tg_linker::SCRIPT).unwrap_or_else(|err| {
         panic!("failed to write linker script to {}: {}", ld.display(), err)
     });
     println!("cargo:rustc-link-arg=-T{}", ld.display());
