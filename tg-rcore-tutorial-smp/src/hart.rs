@@ -2,7 +2,9 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
+#[cfg(target_arch = "riscv64")]
 const SBI_EXT_HSM: usize = 0x48534D;
+#[cfg(target_arch = "riscv64")]
 const SBI_HSM_HART_START: usize = 0;
 
 /// 记录每个 hart 是否已经进入 S 态初始化代码。
@@ -12,28 +14,45 @@ pub static HART_STARTED: [AtomicBool; crate::MAX_CPUS] =
 /// 读取当前 hart id。
 #[inline(always)]
 pub fn hart_id() -> usize {
-    let id: usize;
-    unsafe {
-        core::arch::asm!("mv {}, tp", out(reg) id, options(nostack, preserves_flags));
+    #[cfg(target_arch = "riscv64")]
+    {
+        let id: usize;
+        unsafe {
+            core::arch::asm!("mv {}, tp", out(reg) id, options(nostack, preserves_flags));
+        }
+        id
     }
-    id
+
+    #[cfg(not(target_arch = "riscv64"))]
+    {
+        0
+    }
 }
 
 /// 启动目标 hart。
 pub fn boot_hart(hart_id: usize, start_addr: usize, opaque: usize) {
-    let error: isize;
-    unsafe {
-        core::arch::asm!(
-            "ecall",
-            inlateout("x10") hart_id => error,
-            in("x11") start_addr,
-            in("x12") opaque,
-            in("x16") SBI_HSM_HART_START,
-            in("x17") SBI_EXT_HSM,
-        );
+    #[cfg(target_arch = "riscv64")]
+    {
+        let error: isize;
+        unsafe {
+            core::arch::asm!(
+                "ecall",
+                inlateout("x10") hart_id => error,
+                in("x11") start_addr,
+                in("x12") opaque,
+                in("x16") SBI_HSM_HART_START,
+                in("x17") SBI_EXT_HSM,
+            );
+        }
+        if error != 0 {
+            panic!("SBI hart_start failed for hart {}: error {}", hart_id, error);
+        }
     }
-    if error != 0 {
-        panic!("SBI hart_start failed for hart {}: error {}", hart_id, error);
+
+    #[cfg(not(target_arch = "riscv64"))]
+    {
+        let _ = (hart_id, start_addr, opaque);
+        panic!("boot_hart is only supported on riscv64");
     }
 }
 

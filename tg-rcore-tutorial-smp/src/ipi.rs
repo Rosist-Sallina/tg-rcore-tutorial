@@ -2,6 +2,7 @@
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
+#[cfg(target_arch = "riscv64")]
 const SBI_EXT_IPI: usize = 0x735049;
 
 /// IPI 动作。
@@ -24,6 +25,8 @@ static PENDING_IPI: [AtomicU8; crate::MAX_CPUS] =
 /// 向目标 hart 投递动作。
 pub fn send_ipi(target_hart: usize, action: IpiAction) {
     PENDING_IPI[target_hart].store(action as u8, Ordering::Release);
+
+    #[cfg(target_arch = "riscv64")]
     unsafe {
         let hart_mask = 1usize << target_hart;
         let _error: isize;

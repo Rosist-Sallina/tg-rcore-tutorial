@@ -4,25 +4,30 @@
 
 ## 学生提交信息
 
-- crate 名称：`rosist-sallina-tg-rcore-tutorial-T1L3`
-- crate 版本：`0.0.1-preview.2`
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-T2L10`
+- crate 版本：`0.0.1-preview.1`
+- 依赖 crate：`rosist-sallina-tg-rcore-tutorial-sbi-t2l10`
+- 依赖 crate：`rosist-sallina-tg-rcore-tutorial-smp-t2l10`
 - 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
-- 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-ch5`
-- 建议 tag：`rosist-sallina-tg-rcore-tutorial-T1L3-v0.0.1-preview.2`
+- 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/t2l10-redo/tg-rcore-tutorial-ch5`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-T2L10-v0.0.1-preview.1`
 
 复现方式：
 
 ```bash
-cargo clone rosist-sallina-tg-rcore-tutorial-T1L3
-cd rosist-sallina-tg-rcore-tutorial-T1L3
-cargo run --features exercise
+cargo clone rosist-sallina-tg-rcore-tutorial-T2L10
+cd rosist-sallina-tg-rcore-tutorial-T2L10
+cargo run --features smp
 ```
 
 ```bash
 git clone https://github.com/Rosist-Sallina/tg-rcore-tutorial.git
 cd tg-rcore-tutorial/tg-rcore-tutorial-ch5
-cargo run --features exercise
+git checkout t2l10-redo
+cargo run --features smp
 ```
+
+这个 crate 以 `ch5` 作为运行入口，承载 `T2L10` 的多核教学实验成果。实验代码实际覆盖 `ch3~ch5` 三章，相关设计说明、实验指导、常见 bug 和测试计划见仓库目录 `docs/smp/`。
 
 通过本章的学习和实践，你将理解：
 

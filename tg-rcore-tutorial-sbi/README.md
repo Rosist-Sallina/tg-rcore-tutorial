@@ -1,5 +1,16 @@
 # tg-rcore-tutorial-sbi
 
+## 学生提交信息
+
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-sbi-t2l10`
+- crate 版本：`0.0.1-preview.1`
+- 服务实验：`rosist-sallina-tg-rcore-tutorial-T2L10`
+- 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
+- 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/t2l10-redo/tg-rcore-tutorial-sbi`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-sbi-t2l10-v0.0.1-preview.1`
+
+这个版本在原有 `SBI` 封装上补了 `T2L10` 多核实验需要的启动与唤醒辅助逻辑，用来支撑 `ch3~ch5` 的 SMP 运行路径。
+
 [![Crates.io](https://img.shields.io/crates/v/tg-rcore-tutorial-sbi.svg)](https://crates.io/crates/tg-rcore-tutorial-sbi)
 [![Documentation](https://docs.rs/tg-rcore-tutorial-sbi/badge.svg)](https://docs.rs/tg-rcore-tutorial-sbi)
 [![License](https://img.shields.io/crates/l/tg-rcore-tutorial-sbi.svg)](LICENSE)

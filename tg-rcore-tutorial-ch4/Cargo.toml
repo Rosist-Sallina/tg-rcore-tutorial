@@ -30,14 +30,14 @@ panic = "abort"
 xmas-elf = "0.8.0"
 riscv = "0.10.1"
 
-tg-sbi = { package = "tg-rcore-tutorial-sbi", path = "../tg-rcore-tutorial-sbi", version = "0.4.8" }
+tg-sbi = { package = "rosist-sallina-tg-rcore-tutorial-sbi-t2l10", path = "../tg-rcore-tutorial-sbi", version = "0.0.1-preview.1" }
 tg-linker = { package = "tg-rcore-tutorial-linker", path = "../tg-rcore-tutorial-linker", version = "0.4.8" }
 tg-console = { package = "tg-rcore-tutorial-console", path = "../tg-rcore-tutorial-console", version = "0.4.8" }
 tg-kernel-context = { package = "tg-rcore-tutorial-kernel-context", path = "../tg-rcore-tutorial-kernel-context", version = "0.4.8", features = ["foreign"] }
 tg-kernel-alloc = { package = "tg-rcore-tutorial-kernel-alloc", path = "../tg-rcore-tutorial-kernel-alloc", version = "0.4.8" }
 tg-kernel-vm = { package = "tg-rcore-tutorial-kernel-vm", path = "../tg-rcore-tutorial-kernel-vm", version = "0.4.8" }
 tg-syscall = { package = "rosist-sallina-tg-rcore-tutorial-syscall-t1l5", path = "../tg-rcore-tutorial-syscall", version = "0.0.1-preview.1", features = ["kernel"] }
-tg-smp = { package = "tg-rcore-tutorial-smp", path = "../tg-rcore-tutorial-smp", version = "0.4.8", optional = true }
+tg-smp = { package = "rosist-sallina-tg-rcore-tutorial-smp-t2l10", path = "../tg-rcore-tutorial-smp", version = "0.0.1-preview.1", optional = true }
 
 [build-dependencies]
 tg-linker = { package = "tg-rcore-tutorial-linker", path = "../tg-rcore-tutorial-linker", version = "0.4.8" }
