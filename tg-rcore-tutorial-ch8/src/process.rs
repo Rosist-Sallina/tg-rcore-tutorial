@@ -44,6 +44,8 @@ use xmas_elf::{
     program, ElfFile,
 };
 
+const USER_STACK_PAGES: usize = 16;
+
 /// 线程（执行单元）
 ///
 /// 每个线程有独立的 TID 和上下文（寄存器状态、satp）。
@@ -76,6 +78,14 @@ pub struct Process {
     pub address_space: AddressSpace<Sv39, Sv39Manager>,
     /// 文件描述符表（所有线程共享）
     pub fd_table: Vec<Option<Mutex<Fd>>>,
+    /// 堆底地址（ELF 加载最高地址向上按页对齐）
+    pub heap_bottom: usize,
+    /// 当前程序 break（sbrk 管理）
+    pub program_brk: usize,
+    /// framebuffer mmap 在用户空间的起始地址（0 表示未映射）
+    pub fb_map_base: usize,
+    /// framebuffer mmap 长度
+    pub fb_map_len: usize,
     /// 信号处理器
     pub signal: Box<dyn Signal>,
     /// 信号量列表（**本章新增**，所有线程共享）
@@ -255,6 +265,10 @@ impl Process {
     pub fn exec(&mut self, elf: ElfFile) {
         let (proc, thread) = Process::from_elf(elf).unwrap();
         self.address_space = proc.address_space;
+        self.heap_bottom = proc.heap_bottom;
+        self.program_brk = proc.program_brk;
+        self.fb_map_base = 0;
+        self.fb_map_len = 0;
         let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
         unsafe {
             let pthreads = (*processor).get_thread(self.pid).unwrap();
@@ -291,6 +305,10 @@ impl Process {
                 pid,
                 address_space,
                 fd_table: new_fd_table,
+                heap_bottom: self.heap_bottom,
+                program_brk: self.program_brk,
+                fb_map_base: self.fb_map_base,
+                fb_map_len: self.fb_map_len,
                 signal: self.signal.from_fork(),
                 // 子进程的同步原语列表初始为空
                 semaphore_list: Vec::new(),
@@ -322,13 +340,22 @@ impl Process {
         const PAGE_MASK: usize = PAGE_SIZE - 1;
 
         let mut address_space = AddressSpace::new();
+        let mut max_end_va = 0usize;
         for program in elf.program_iter() {
             if !matches!(program.get_type(), Ok(program::Type::Load)) { continue; }
             let off_file = program.offset() as usize;
             let len_file = program.file_size() as usize;
-            let off_mem = program.virtual_addr() as usize;
+            let mut off_mem = program.virtual_addr() as usize;
             let end_mem = off_mem + program.mem_size() as usize;
-            assert_eq!(off_file & PAGE_MASK, off_mem & PAGE_MASK);
+            max_end_va = max_end_va.max(end_mem);
+            if len_file == 0 {
+                off_mem = VAddr::<Sv39>::new(off_mem).ceil().base().val();
+                if off_mem >= end_mem {
+                    continue;
+                }
+            } else {
+                assert_eq!(off_file & PAGE_MASK, off_mem & PAGE_MASK);
+            }
             let mut flags: [u8; 5] = *b"U___V";
             if program.flags().is_execute() { flags[1] = b'X'; }
             if program.flags().is_write() { flags[2] = b'W'; }
@@ -340,14 +367,16 @@ impl Process {
                 parse_flags(unsafe { core::str::from_utf8_unchecked(&flags) }).unwrap(),
             );
         }
-        // 分配 2 页用户栈
+        let heap_bottom = VAddr::<Sv39>::new(max_end_va).ceil().base().val();
+        // 分配用户栈
         let stack = unsafe {
             alloc_zeroed(Layout::from_size_align_unchecked(
-                2 << Sv39::PAGE_BITS, 1 << Sv39::PAGE_BITS,
+                USER_STACK_PAGES << Sv39::PAGE_BITS,
+                1 << Sv39::PAGE_BITS,
             ))
         };
         address_space.map_extern(
-            VPN::new((1 << 26) - 2)..VPN::new(1 << 26),
+            VPN::new((1 << 26) - USER_STACK_PAGES)..VPN::new(1 << 26),
             PPN::new(stack as usize >> Sv39::PAGE_BITS),
             build_flags("U_WRV"),
         );
@@ -369,6 +398,10 @@ impl Process {
                     // stderr
                     Some(Mutex::new(Fd::Empty { read: false, write: true })),
                 ],
+                heap_bottom,
+                program_brk: heap_bottom,
+                fb_map_base: 0,
+                fb_map_len: 0,
                 signal: Box::new(SignalImpl::new()),
                 semaphore_list: Vec::new(),
                 mutex_list: Vec::new(),
@@ -381,5 +414,29 @@ impl Process {
             },
             thread,
         ))
+    }
+
+    /// 修改程序 break 位置（实现 sbrk）。
+    pub fn change_program_brk(&mut self, size: isize) -> Option<usize> {
+        let old_brk = self.program_brk;
+        let new_brk = self.program_brk as isize + size;
+        if new_brk < self.heap_bottom as isize {
+            return None;
+        }
+        let new_brk = new_brk as usize;
+        let old_brk_ceil = VAddr::<Sv39>::new(old_brk).ceil();
+        let new_brk_ceil = VAddr::<Sv39>::new(new_brk).ceil();
+        if size > 0 {
+            if new_brk_ceil.val() > old_brk_ceil.val() {
+                self.address_space
+                    .map(old_brk_ceil..new_brk_ceil, &[], 0, build_flags("U_WRV"));
+            }
+        } else if size < 0 {
+            if old_brk_ceil.val() > new_brk_ceil.val() {
+                self.address_space.unmap(new_brk_ceil..old_brk_ceil);
+            }
+        }
+        self.program_brk = new_brk;
+        Some(old_brk)
     }
 }

@@ -54,6 +54,10 @@ mod process;
 mod processor;
 /// VirtIO 块设备驱动
 mod virtio_block;
+/// VirtIO GPU 驱动
+mod virtio_gpu;
+/// VirtIO 键盘输入驱动
+mod virtio_input;
 
 #[macro_use]
 extern crate tg_console;
@@ -126,8 +130,11 @@ unsafe extern "C" fn _start() -> ! {
     )
 }
 
-/// 物理内存容量 = 48 MiB
-const MEMORY: usize = 48 << 20;
+/// 内核可用内存窗口大小（QEMU `-m 128M` 下约 126 MiB）。
+///
+/// DRAM 从 `0x8000_0000` 开始，内核链接地址在 `0x8020_0000`，
+/// 因此可用窗口约为 `128MiB - 2MiB = 126MiB`。
+const MEMORY: usize = 126 << 20;
 /// 异界传送门所在虚页
 const PROTAL_TRANSIT: VPN<Sv39> = VPN::MAX;
 
@@ -158,7 +165,11 @@ impl KernelSpace {
 static KERNEL_SPACE: KernelSpace = KernelSpace::new();
 
 /// VirtIO MMIO 设备地址范围
-pub const MMIO: &[(usize, usize)] = &[(0x1000_1000, 0x00_1000)];
+pub const MMIO: &[(usize, usize)] = &[
+    (0x1000_1000, 0x00_1000), // VirtIO block (bus.0)
+    (0x1000_2000, 0x00_1000), // VirtIO GPU (bus.1)
+    (0x1000_3000, 0x00_1000), // VirtIO Input-keyboard (bus.2)
+];
 
 /// 内核主函数
 ///
@@ -190,17 +201,26 @@ extern "C" fn rust_main() -> ! {
     assert!(portal_layout.size() < 1 << Sv39::PAGE_BITS);
     // 步骤 5：内核地址空间
     kernel_space(layout, MEMORY, portal_ptr as _);
-    // 步骤 6：异界传送门初始化
+    // 步骤 6：外设初始化（GPU + Keyboard）
+    if let Err(err) = virtio_gpu::init_gpu() {
+        log::info!("init GPU failed: {err}");
+    }
+    if let Err(err) = virtio_input::init_input() {
+        log::info!("init input failed: {err}");
+    }
+    // 步骤 7：异界传送门初始化
     let portal = unsafe { MultislotPortal::init_transit(PROTAL_TRANSIT.base().val(), 1) };
-    // 步骤 7：系统调用初始化
+    // 步骤 8：系统调用初始化
     tg_syscall::init_io(&SyscallContext);
     tg_syscall::init_process(&SyscallContext);
     tg_syscall::init_scheduling(&SyscallContext);
     tg_syscall::init_clock(&SyscallContext);
+    tg_syscall::init_memory(&SyscallContext);
     tg_syscall::init_signal(&SyscallContext);
     tg_syscall::init_thread(&SyscallContext);       // 本章新增：线程系统调用
     tg_syscall::init_sync_mutex(&SyscallContext);   // 本章新增：同步原语系统调用
-    // 步骤 8：加载 initproc（返回 Process + Thread）
+    tg_syscall::init_framebuffer(&SyscallContext);  // ch8 扩展：DOOM framebuffer/input syscall
+    // 步骤 9：加载 initproc（返回 Process + Thread）
     let initproc = read_all(FS.open("initproc", OpenFlags::RDONLY).unwrap());
     if let Some((process, thread)) = Process::from_elf(ElfFile::new(initproc.as_slice()).unwrap()) {
         // 初始化双层管理器：ProcManager（进程）+ ThreadManager（线程）
@@ -353,8 +373,12 @@ mod impls {
         Sv39, Thread, PROCESSOR,
     };
     use alloc::sync::Arc;
-    use alloc::{alloc::alloc_zeroed, string::String, vec::Vec};
-    use core::{alloc::Layout, ptr::NonNull};
+    use alloc::{alloc::alloc_zeroed, vec::Vec};
+    use core::{
+        alloc::Layout,
+        ptr::NonNull,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
     use spin::Mutex;
     use tg_console::log;
     use tg_easy_fs::{make_pipe, FSManager, OpenFlags, UserBuffer};
@@ -430,6 +454,11 @@ mod impls {
     const READABLE: VmFlags<Sv39> = build_flags("RV");
     const WRITEABLE: VmFlags<Sv39> = build_flags("W_V");
     const DEADLOCK_CODE: isize = -0xdead;
+    const DOOM_WIDTH: usize = 320;
+    const DOOM_HEIGHT: usize = 200;
+    const DOOM_BPP: usize = 4;
+    const DOOM_FRAME_BYTES: usize = DOOM_WIDTH * DOOM_HEIGHT * DOOM_BPP;
+    static FB_FLUSH_COUNT: AtomicUsize = AtomicUsize::new(0);
 
     /// IO 系统调用（与第七章基本相同）
     ///
@@ -458,6 +487,13 @@ mod impls {
         }
 
         fn read(&self, _caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
+            #[repr(C)]
+            struct RcoreInputEvent {
+                timestamp_usec: u64,
+                event_type: u16,
+                code: u16,
+                value: u32,
+            }
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             if let Some(ptr) = current.address_space.translate(VAddr::new(buf), WRITEABLE) {
                 if fd == STDIN {
@@ -468,36 +504,115 @@ mod impls {
                     count as _
                 } else if let Some(file) = &current.fd_table[fd] {
                     let file = file.lock();
-                    if file.readable() {
-                        let mut v: Vec<&'static mut [u8]> = Vec::new();
-                        unsafe { v.push(core::slice::from_raw_parts_mut(ptr.as_ptr(), count)) };
-                        file.read(UserBuffer::new(v)) as _
-                    } else { log::error!("file not readable"); -1 }
+                    match &*file {
+                        Fd::Input => {
+                            let event_size = core::mem::size_of::<RcoreInputEvent>();
+                            if count < event_size {
+                                return -1;
+                            }
+                            if let Some(mut out) = current.address_space.translate::<RcoreInputEvent>(
+                                VAddr::new(buf),
+                                WRITEABLE,
+                            ) {
+                                if let Some(event) = crate::virtio_input::pop_event() {
+                                    let now_ns = riscv::register::time::read() * 10000 / 125;
+                                    *unsafe { out.as_mut() } = RcoreInputEvent {
+                                        timestamp_usec: (now_ns / 1000) as u64,
+                                        event_type: event.event_type,
+                                        code: event.code,
+                                        value: event.value,
+                                    };
+                                    event_size as isize
+                                } else {
+                                    -1
+                                }
+                            } else {
+                                -1
+                            }
+                        }
+                        _ if file.readable() => {
+                            let mut v: Vec<&'static mut [u8]> = Vec::new();
+                            unsafe { v.push(core::slice::from_raw_parts_mut(ptr.as_ptr(), count)) };
+                            file.read(UserBuffer::new(v)) as _
+                        }
+                        _ => { log::error!("file not readable"); -1 }
+                    }
                 } else { log::error!("unsupported fd: {fd}"); -1 }
             } else { log::error!("ptr not writeable"); -1 }
         }
 
-        fn open(&self, _caller: Caller, path: usize, flags: usize) -> isize {
+        fn open(&self, _caller: Caller, path: usize, count: usize, flags: usize) -> isize {
+            log::info!("sys_openat path={:#x} count={} flags={:#x}", path, count, flags);
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             if let Some(ptr) = current.address_space.translate(VAddr::new(path), READABLE) {
-                let mut string = String::new();
-                let mut raw_ptr: *mut u8 = ptr.as_ptr();
-                loop {
-                    unsafe {
-                        let ch = *raw_ptr;
-                        if ch == 0 { break; }
-                        string.push(ch as char);
-                        raw_ptr = (raw_ptr as usize + 1) as *mut u8;
-                    }
+                let path_bytes =
+                    unsafe { core::slice::from_raw_parts(ptr.as_ptr() as *const u8, count) };
+                let Ok(path_str) = core::str::from_utf8(path_bytes) else {
+                    log::info!("open utf8 decode failed");
+                    return -1;
+                };
+                log::info!("open path = {path_str}");
+                if path_str == "/dev/fb0" {
+                    let new_fd = current.fd_table.len();
+                    current.fd_table.push(Some(Mutex::new(Fd::Framebuffer)));
+                    log::info!("open /dev/fb0 -> fd {new_fd}");
+                    return new_fd as isize;
+                }
+                if path_str == "/dev/input0" {
+                    let new_fd = current.fd_table.len();
+                    current.fd_table.push(Some(Mutex::new(Fd::Input)));
+                    log::info!("open /dev/input0 -> fd {new_fd}");
+                    return new_fd as isize;
                 }
                 if let Some(file_handle) =
-                    FS.open(string.as_str(), OpenFlags::from_bits(flags as u32).unwrap())
+                    FS.open(path_str, OpenFlags::from_bits(flags as u32).unwrap_or(OpenFlags::RDONLY))
                 {
                     let new_fd = current.fd_table.len();
                     current.fd_table.push(Some(Mutex::new(Fd::File((*file_handle).clone()))));
                     new_fd as isize
                 } else { -1 }
             } else { log::error!("ptr not writeable"); -1 }
+        }
+
+        fn lseek(&self, _caller: Caller, fd: usize, offset: isize, whence: usize) -> isize {
+            let current = PROCESSOR.get_mut().get_current_proc().unwrap();
+            if fd >= current.fd_table.len() || current.fd_table[fd].is_none() {
+                return -1;
+            }
+            let file = current.fd_table[fd].as_ref().unwrap().lock();
+            let Fd::File(file_handle) = &*file else {
+                return -1;
+            };
+            let base = match whence {
+                0 => 0isize,
+                1 => file_handle.offset.get() as isize,
+                2 => {
+                    if let Some(inode) = &file_handle.inode {
+                        let mut end = 0usize;
+                        let mut buf = [0u8; 512];
+                        loop {
+                            let n = inode.read_at(end, &mut buf);
+                            if n == 0 {
+                                break;
+                            }
+                            end += n;
+                            if n < buf.len() {
+                                break;
+                            }
+                        }
+                        end as isize
+                    } else {
+                        return -1;
+                    }
+                }
+                _ => return -1,
+            };
+            let new_off = base + offset;
+            if new_off < 0 {
+                return -1;
+            }
+            file_handle.offset.set(new_off as usize);
+            new_off
         }
 
         #[inline]
@@ -523,6 +638,74 @@ mod impls {
             current.fd_table.push(Some(Mutex::new(Fd::PipeRead(read_end))));
             current.fd_table.push(Some(Mutex::new(Fd::PipeWrite(write_end))));
             0
+        }
+
+        fn fstat(&self, _caller: Caller, fd: usize, st: usize) -> isize {
+            let current = PROCESSOR.get_mut().get_current_proc().unwrap();
+            if fd >= current.fd_table.len() || current.fd_table[fd].is_none() {
+                return -1;
+            }
+            if let Some(mut ptr) = current
+                .address_space
+                .translate::<Stat>(VAddr::new(st), WRITEABLE)
+            {
+                *unsafe { ptr.as_mut() } = Stat::new();
+                0
+            } else {
+                -1
+            }
+        }
+
+        fn ioctl(&self, _caller: Caller, fd: usize, request: usize, argp: usize) -> isize {
+            const FB_FLUSH: usize = 1;
+            const FB_GET_RESOLUTION: usize = 2;
+            let current = PROCESSOR.get_mut().get_current_proc().unwrap();
+            if fd >= current.fd_table.len() || current.fd_table[fd].is_none() {
+                return -1;
+            }
+            let file = current.fd_table[fd].as_ref().unwrap().lock();
+            match &*file {
+                Fd::Framebuffer => match request {
+                    FB_GET_RESOLUTION => {
+                        log::info!("ioctl fb get resolution");
+                        if let Some(ptr) = current
+                            .address_space
+                            .translate::<u32>(VAddr::new(argp), WRITEABLE)
+                        {
+                            unsafe {
+                                ptr.as_ptr().write_volatile(640);
+                                ptr.as_ptr().add(1).write_volatile(400);
+                            }
+                            0
+                        } else {
+                            -1
+                        }
+                    }
+                    FB_FLUSH => {
+                        let count = FB_FLUSH_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+                        let _ = crate::virtio_gpu::with_framebuffer_mut(|fb, width, height| {
+                            let pixels = unsafe {
+                                core::slice::from_raw_parts_mut(fb.as_mut_ptr() as *mut u32, fb.len() / 4)
+                            };
+                            for pixel in pixels.iter_mut() {
+                                *pixel |= 0xff00_0000;
+                            }
+                            if count <= 3 || count % 120 == 0 {
+                                let p0 = pixels.first().copied().unwrap_or(0);
+                                let p1 = pixels.get((width as usize * height as usize) / 2).copied().unwrap_or(0);
+                                log::info!(
+                                    "fb_flush #{count}: sample pixels = {:#010x}, {:#010x}",
+                                    p0,
+                                    p1
+                                );
+                            }
+                        });
+                        crate::virtio_gpu::flush().map(|_| 0).unwrap_or(-1)
+                    }
+                    _ => -1,
+                },
+                _ => -1,
+            }
         }
     }
 
@@ -584,6 +767,14 @@ mod impls {
         fn getpid(&self, _caller: Caller) -> isize {
             PROCESSOR.get_mut().get_current_proc().unwrap().pid.get_usize() as _
         }
+
+        fn sbrk(&self, _caller: Caller, size: i32) -> isize {
+            let current = PROCESSOR.get_mut().get_current_proc().unwrap();
+            current
+                .change_program_brk(size as isize)
+                .map(|old_brk| old_brk as isize)
+                .unwrap_or(-1)
+        }
     }
 
     impl Scheduling for SyscallContext {
@@ -596,7 +787,13 @@ mod impls {
         fn clock_gettime(&self, _caller: Caller, clock_id: ClockId, tp: usize) -> isize {
             const WRITABLE: VmFlags<Sv39> = build_flags("W_V");
             match clock_id {
-                ClockId::CLOCK_MONOTONIC => {
+                ClockId::CLOCK_REALTIME
+                | ClockId::CLOCK_MONOTONIC
+                | ClockId::CLOCK_MONOTONIC_RAW
+                | ClockId::CLOCK_REALTIME_COARSE
+                | ClockId::CLOCK_MONOTONIC_COARSE
+                | ClockId::CLOCK_BOOTTIME
+                | ClockId::CLOCK_TAI => {
                     if let Some(mut ptr) = PROCESSOR.get_mut().get_current_proc().unwrap()
                         .address_space.translate(VAddr::new(tp), WRITABLE)
                     {
@@ -609,6 +806,182 @@ mod impls {
                     } else { log::error!("ptr not readable"); -1 }
                 }
                 _ => -1,
+            }
+        }
+    }
+
+    impl Memory for SyscallContext {
+        fn mmap(
+            &self,
+            _caller: Caller,
+            addr: usize,
+            length: usize,
+            _prot: i32,
+            _flags: i32,
+            fd: i32,
+            _offset: usize,
+        ) -> isize {
+            if length == 0 {
+                return -1;
+            }
+            let current = PROCESSOR.get_mut().get_current_proc().unwrap();
+            let base = if addr == 0 { 0x4000_0000 } else { addr };
+            let is_fb = fd >= 0
+                && (fd as usize) < current.fd_table.len()
+                && current.fd_table[fd as usize]
+                    .as_ref()
+                    .map(|item| matches!(&*item.lock(), Fd::Framebuffer))
+                    .unwrap_or(false);
+
+            if is_fb {
+                let (fb_ptr, fb_len) = match crate::virtio_gpu::framebuffer_addr_len() {
+                    Ok(value) => value,
+                    Err(_) => return -1,
+                };
+                if fb_ptr & ((1 << Sv39::PAGE_BITS) - 1) != 0 {
+                    return -1;
+                }
+                let map_len = core::cmp::min(length, fb_len);
+                let start = VAddr::<Sv39>::new(base).floor();
+                let end = VAddr::<Sv39>::new(base + map_len).ceil();
+                current.address_space.map_extern(
+                    start..end,
+                    PPN::new(fb_ptr >> Sv39::PAGE_BITS),
+                    build_flags("U_WRV"),
+                );
+                current.fb_map_base = base;
+                current.fb_map_len = map_len;
+                log::info!(
+                    "mmap fb: user={:#x} len={} -> kernel_fb={:#x} fb_len={}",
+                    base,
+                    map_len,
+                    fb_ptr,
+                    fb_len
+                );
+                return base as isize;
+            }
+
+            let start = VAddr::<Sv39>::new(base).floor();
+            let end = VAddr::<Sv39>::new(base + length).ceil();
+            current
+                .address_space
+                .map(start..end, &[], 0, build_flags("U_WRV"));
+            base as isize
+        }
+
+        fn munmap(&self, _caller: Caller, addr: usize, length: usize) -> isize {
+            if length == 0 {
+                return -1;
+            }
+            let current = PROCESSOR.get_mut().get_current_proc().unwrap();
+            let start = VAddr::<Sv39>::new(addr).floor();
+            let end = VAddr::<Sv39>::new(addr + length).ceil();
+            current.address_space.unmap(start..end);
+            if current.fb_map_base == addr {
+                current.fb_map_base = 0;
+                current.fb_map_len = 0;
+            }
+            0
+        }
+    }
+
+    /// DOOM framebuffer + 输入事件系统调用（ch8 扩展）
+    impl tg_syscall::Framebuffer for SyscallContext {
+        #[inline]
+        fn framebuffer_init(&self, _caller: Caller) -> isize {
+            if crate::virtio_gpu::init_gpu().is_err() {
+                return -1;
+            }
+            if crate::virtio_input::init_input().is_err() {
+                return -1;
+            }
+            0
+        }
+
+        fn framebuffer_flush(&self, _caller: Caller, buf_ptr: usize, len: usize) -> isize {
+            if len < DOOM_FRAME_BYTES {
+                return -1;
+            }
+
+            let current = PROCESSOR.get_mut().get_current_proc().unwrap();
+            let Some(ptr) = current.address_space.translate(VAddr::new(buf_ptr), READABLE) else {
+                return -1;
+            };
+            let src = unsafe { core::slice::from_raw_parts(ptr.as_ptr(), DOOM_FRAME_BYTES) };
+
+            let draw_ret = crate::virtio_gpu::with_framebuffer_mut(|fb, width, height| {
+                let fb_width = width as usize;
+                let fb_height = height as usize;
+                if fb_width < DOOM_WIDTH * 2 || fb_height < DOOM_HEIGHT * 2 {
+                    return -1;
+                }
+
+                let src_pixels =
+                    unsafe { core::slice::from_raw_parts(src.as_ptr() as *const u32, DOOM_WIDTH * DOOM_HEIGHT) };
+                let dst_pixels =
+                    unsafe { core::slice::from_raw_parts_mut(fb.as_mut_ptr() as *mut u32, fb.len() / 4) };
+
+                for y in 0..DOOM_HEIGHT {
+                    let src_row = &src_pixels[y * DOOM_WIDTH..(y + 1) * DOOM_WIDTH];
+                    let row0 = (y * 2) * fb_width;
+                    let row1 = row0 + fb_width;
+                    for (x, &pixel) in src_row.iter().enumerate() {
+                        let dx = x * 2;
+                        let pixel = pixel | 0xff00_0000;
+                        dst_pixels[row0 + dx] = pixel;
+                        dst_pixels[row0 + dx + 1] = pixel;
+                        dst_pixels[row1 + dx] = pixel;
+                        dst_pixels[row1 + dx + 1] = pixel;
+                    }
+                }
+                0
+            })
+            .unwrap_or(-1);
+
+            if draw_ret != 0 {
+                return -1;
+            }
+            if crate::virtio_gpu::flush().is_err() {
+                return -1;
+            }
+            0
+        }
+
+        fn framebuffer_info(&self, _caller: Caller, info_ptr: usize) -> isize {
+            let current = PROCESSOR.get_mut().get_current_proc().unwrap();
+            if let Some(mut ptr) = current
+                .address_space
+                .translate::<tg_syscall::FramebufferInfo>(VAddr::new(info_ptr), WRITEABLE)
+            {
+                *unsafe { ptr.as_mut() } = tg_syscall::FramebufferInfo {
+                    width: DOOM_WIDTH as u32,
+                    height: DOOM_HEIGHT as u32,
+                    stride: (DOOM_WIDTH * DOOM_BPP) as u32,
+                    bpp: (DOOM_BPP * 8) as u32,
+                };
+                0
+            } else {
+                -1
+            }
+        }
+
+        fn input_event(&self, _caller: Caller, event_ptr: usize) -> isize {
+            let current = PROCESSOR.get_mut().get_current_proc().unwrap();
+            let Some(event) = crate::virtio_input::pop_event() else {
+                return -1;
+            };
+            if let Some(mut ptr) = current
+                .address_space
+                .translate::<tg_syscall::InputEventUser>(VAddr::new(event_ptr), WRITEABLE)
+            {
+                *unsafe { ptr.as_mut() } = tg_syscall::InputEventUser {
+                    event_type: event.event_type,
+                    code: event.code,
+                    value: event.value,
+                };
+                0
+            } else {
+                -1
             }
         }
     }
@@ -670,26 +1043,32 @@ mod impls {
         /// 为新线程分配独立的用户栈（从高地址向下搜索未映射的页面），
         /// 创建新的执行上下文，入口为 entry，参数为 arg。
         fn thread_create(&self, _caller: Caller, entry: usize, arg: usize) -> isize {
+            const USER_STACK_PAGES: usize = 16;
             let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
             let current_proc = unsafe { (*processor).get_current_proc().unwrap() };
             // 从最高用户栈位置向下搜索空闲的页表区域
-            let mut vpn = VPN::<Sv39>::new((1 << 26) - 2);
+            let mut vpn = VPN::<Sv39>::new((1 << 26) - USER_STACK_PAGES);
             let addrspace = &mut current_proc.address_space;
             loop {
                 let idx = vpn.index_in(Sv39::MAX_LEVEL);
                 if !addrspace.root()[idx].is_valid() { break; }
-                vpn = VPN::<Sv39>::new(vpn.val() - 3);
+                vpn = VPN::<Sv39>::new(vpn.val() - (USER_STACK_PAGES + 1));
             }
-            // 分配 2 页用户栈
+            // 分配用户栈
             let stack = unsafe {
                 alloc_zeroed(Layout::from_size_align_unchecked(
-                    2 << Sv39::PAGE_BITS, 1 << Sv39::PAGE_BITS,
+                    USER_STACK_PAGES << Sv39::PAGE_BITS,
+                    1 << Sv39::PAGE_BITS,
                 ))
             };
-            addrspace.map_extern(vpn..vpn + 2, PPN::new(stack as usize >> Sv39::PAGE_BITS), build_flags("U_WRV"));
+            addrspace.map_extern(
+                vpn..vpn + USER_STACK_PAGES,
+                PPN::new(stack as usize >> Sv39::PAGE_BITS),
+                build_flags("U_WRV"),
+            );
             let satp = (8 << 60) | addrspace.root_ppn().val();
             let mut context = tg_kernel_context::LocalContext::user(entry);
-            *context.sp_mut() = (vpn + 2).base().val();
+            *context.sp_mut() = (vpn + USER_STACK_PAGES).base().val();
             *context.a_mut(0) = arg;
             let thread = Thread::new(satp, context);
             let tid = thread.tid;

@@ -316,6 +316,11 @@
 #define __NR_condvar_create 1030
 #define __NR_condvar_signal 1031
 #define __NR_condvar_wait 1032
+//
+#define __NR_framebuffer_init 1040
+#define __NR_framebuffer_flush 1041
+#define __NR_framebuffer_info 1042
+#define __NR_input_event 1043
 
 #define __NR_spawn 400
 #define __NR_trace 410

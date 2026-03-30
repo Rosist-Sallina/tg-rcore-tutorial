@@ -1,6 +1,7 @@
 use crate::{
-    ClockId, FrameBufferInfo, SignalAction, SignalNo, Stat, SyscallId, TimeSpec, VmAlgo, VmStats,
-    VMCTL_GET_STATS, VMCTL_RESET_STATS, VMCTL_SET_ALGO, VMCTL_SET_QUOTA,
+    ClockId, FrameBufferInfo, FramebufferInfo, InputEventUser, SignalAction, SignalNo, Stat,
+    SyscallId, TimeSpec, VmAlgo, VmStats, VMCTL_GET_STATS, VMCTL_RESET_STATS, VMCTL_SET_ALGO,
+    VMCTL_SET_QUOTA,
 };
 use bitflags::*;
 use native::*;
@@ -54,6 +55,43 @@ pub fn fb_present() -> isize {
     unsafe { syscall0(SyscallId::FB_PRESENT) }
 }
 
+/// 初始化 DOOM framebuffer 通道。
+#[inline]
+pub fn framebuffer_init() -> isize {
+    unsafe { syscall0(SyscallId::FRAMEBUFFER_INIT) }
+}
+
+/// 刷新 DOOM framebuffer 数据。
+#[inline]
+pub fn framebuffer_flush(buf: &[u8]) -> isize {
+    unsafe {
+        syscall2(
+            SyscallId::FRAMEBUFFER_FLUSH,
+            buf.as_ptr() as usize,
+            buf.len(),
+        )
+    }
+}
+
+/// 获取 DOOM framebuffer 参数。
+#[inline]
+pub fn framebuffer_info(info: &mut FramebufferInfo) -> isize {
+    unsafe {
+        syscall1(
+            SyscallId::FRAMEBUFFER_INFO,
+            info as *mut FramebufferInfo as usize,
+        )
+    }
+}
+
+/// 非阻塞读取一个输入事件。
+///
+/// 返回 0 表示成功读到事件，-1 表示当前无事件。
+#[inline]
+pub fn input_event(event: &mut InputEventUser) -> isize {
+    unsafe { syscall1(SyscallId::INPUT_EVENT, event as *mut InputEventUser as usize) }
+}
+
 /// 创建一个最小 mailbox。
 #[inline]
 pub fn mailbox_create() -> isize {
@@ -87,12 +125,25 @@ bitflags! {
 pub fn open(path: &str, flags: OpenFlags) -> isize {
     // SAFETY: path 是有效的字符串引用
     unsafe {
-        syscall2(
+        syscall3(
             SyscallId::OPENAT,
             path.as_ptr() as usize,
+            path.len(),
             flags.bits as usize,
         )
     }
+}
+
+/// 调整文件偏移。
+#[inline]
+pub fn lseek(fd: usize, offset: isize, whence: usize) -> isize {
+    unsafe { syscall3(SyscallId::LSEEK, fd, offset as usize, whence) }
+}
+
+/// 设备控制。
+#[inline]
+pub fn ioctl(fd: usize, request: usize, argp: usize) -> isize {
+    unsafe { syscall3(SyscallId::IOCTL, fd, request, argp) }
 }
 
 /// 关闭文件描述符。

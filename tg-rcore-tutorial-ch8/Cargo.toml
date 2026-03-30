@@ -1,12 +1,12 @@
 [package]
-name = "rosist-sallina-tg-rcore-tutorial-T1L5"
+name = "rosist-sallina-tg-rcore-tutorial-T3L8"
 description = "Student AI4OSE lab crate for Chapter 8 of rCore Tutorial: Concurrency with threads, mutex, semaphore and condvar."
 version = "0.0.1-preview.1"
 edition = "2024"
 authors = ["Rosist_Sallina <sallinarosist@gmail.com>"]
 repository = "https://github.com/Rosist-Sallina/tg-rcore-tutorial"
 homepage = "https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-ch8"
-documentation = "https://docs.rs/rosist-sallina-tg-rcore-tutorial-T1L5"
+documentation = "https://docs.rs/rosist-sallina-tg-rcore-tutorial-T3L8"
 license = "GPL-3.0"
 readme = "README.md"
 keywords = ["ai", "ai4ose", "kernel", "learning", "os"]
@@ -37,7 +37,7 @@ tg-console = { package = "tg-rcore-tutorial-console", path = "../tg-rcore-tutori
 tg-kernel-context = { package = "tg-rcore-tutorial-kernel-context", path = "../tg-rcore-tutorial-kernel-context", version = "0.4.8", features = ["foreign"] }
 tg-kernel-alloc = { package = "tg-rcore-tutorial-kernel-alloc", path = "../tg-rcore-tutorial-kernel-alloc", version = "0.4.8" }
 tg-kernel-vm = { package = "tg-rcore-tutorial-kernel-vm", path = "../tg-rcore-tutorial-kernel-vm", version = "0.4.8" }
-tg-syscall = { package = "rosist-sallina-tg-rcore-tutorial-syscall-t1l5", path = "../tg-rcore-tutorial-syscall", version = "0.0.1-preview.1", features = ["kernel"] }
+tg-syscall = { package = "rosist-sallina-tg-rcore-tutorial-syscall-t3l3", path = "../tg-rcore-tutorial-syscall", version = "0.0.1-preview.5", features = ["kernel"] }
 tg-task-manage = { package = "tg-rcore-tutorial-task-manage", path = "../tg-rcore-tutorial-task-manage", version = "0.4.8", features = ["thread"] }
 tg-easy-fs = { package = "rosist-sallina-tg-rcore-tutorial-easy-fs-t1l4", path = "../tg-rcore-tutorial-easy-fs", version = "0.0.1-preview.2" }
 tg-signal = { package = "tg-rcore-tutorial-signal", path = "../tg-rcore-tutorial-signal", version = "0.4.8" }

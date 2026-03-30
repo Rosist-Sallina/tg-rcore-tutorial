@@ -95,6 +95,12 @@ fn build_apps_and_pack_fs() {
     }
 
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let doom_dir = manifest_dir.join("doom");
+    println!("cargo:rerun-if-changed={}", doom_dir.join("Cargo.toml").display());
+    println!("cargo:rerun-if-changed={}", doom_dir.join("build.rs").display());
+    println!("cargo:rerun-if-changed={}", doom_dir.join("src").display());
+    println!("cargo:rerun-if-changed={}", doom_dir.join("assets").display());
+    println!("cargo:rerun-if-changed={}", doom_dir.join("doomgeneric").display());
     let fs_target_dir = manifest_dir
         .join("target")
         .join(TARGET_ARCH)
@@ -109,7 +115,7 @@ fn build_apps_and_pack_fs() {
         build_user_app(&tg_user_root, name, base_address);
     }
 
-    easy_fs_pack(&names, &app_target_dir, &fs_target_dir).unwrap_or_else(|err| {
+    easy_fs_pack(&names, &app_target_dir, &fs_target_dir, &manifest_dir).unwrap_or_else(|err| {
         panic!(
             "failed to pack easy-fs image in {}: {err}",
             fs_target_dir.display()
@@ -163,6 +169,7 @@ fn easy_fs_pack(
     cases: &[String],
     app_target: &PathBuf,
     fs_target: &PathBuf,
+    manifest_dir: &PathBuf,
 ) -> std::io::Result<()> {
     use std::fs::OpenOptions;
     use std::io::Read;
@@ -184,13 +191,43 @@ fn easy_fs_pack(
     let efs = EasyFileSystem::create(block_file, 64 * 2048, 1);
     let root_inode = Arc::new(EasyFileSystem::root_inode(&efs));
 
-    for case in cases {
-        let mut host_file = std::fs::File::open(app_target.join(case)).unwrap();
+    let pack_file = |host_path: &PathBuf, image_name: &str| -> std::io::Result<()> {
+        if !host_path.exists() {
+            return Ok(());
+        }
+        let mut host_file = std::fs::File::open(host_path)?;
         let mut all_data: Vec<u8> = Vec::new();
-        host_file.read_to_end(&mut all_data).unwrap();
-        let inode = root_inode.create(case.as_str()).unwrap();
+        host_file.read_to_end(&mut all_data)?;
+        let inode = root_inode.create(image_name).unwrap();
         inode.write_at(0, all_data.as_slice());
+        Ok(())
+    };
+
+    for case in cases {
+        pack_file(&app_target.join(case), case)?;
     }
+
+    // 可选打包：doom 用户程序（优先 prebuilt real doom）
+    let doom_real = manifest_dir
+        .join("doom")
+        .join("doomgeneric")
+        .join("doomgeneric")
+        .join("doomgeneric");
+    if doom_real.exists() {
+        pack_file(&doom_real, "doom")?;
+    } else {
+        let doom_bin = manifest_dir
+            .join("doom")
+            .join("target")
+            .join(TARGET_ARCH)
+            .join("debug")
+            .join("doom");
+        pack_file(&doom_bin, "doom")?;
+    }
+
+    // 可选打包：doom1.wad
+    let doom_wad = manifest_dir.join("doom").join("assets").join("doom1.wad");
+    pack_file(&doom_wad, "doom1.wad")?;
 
     Ok(())
 }

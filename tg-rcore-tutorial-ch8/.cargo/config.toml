@@ -5,8 +5,10 @@ target = "riscv64gc-unknown-none-elf"
 # QEMU 运行配置
 # 使用 qemu-system-riscv64 运行编译产物
 # -machine virt        ：QEMU virt 虚拟机平台
-# -nographic           ：无图形界面，输出到终端
 # -bios none           ：不使用 BIOS（内核直接启动）
+# -serial stdio        ：串口输出重定向到当前终端
+# -device virtio-gpu   ：图形设备（640x400）
+# -device virtio-keyboard：键盘输入设备
 # -drive ...           ：挂载 easy-fs 磁盘镜像（包含用户程序）
 # -device ...          ：VirtIO 块设备
 # -kernel              ：内核 ELF 文件
@@ -15,9 +17,16 @@ runner = [
     "qemu-system-riscv64",
     "-machine",
     "virt",
-    "-nographic",
     "-bios",
     "none",
+    "-serial",
+    "stdio",
+    "-m",
+    "128M",
+    "-device",
+    "virtio-gpu-device,bus=virtio-mmio-bus.1,xres=640,yres=400",
+    "-device",
+    "virtio-keyboard-device,bus=virtio-mmio-bus.2",
     "-drive",
     "file=target/riscv64gc-unknown-none-elf/debug/fs.img,if=none,format=raw,id=x0",
     "-device",
@@ -30,6 +39,7 @@ runner = [
 # TG_USER_LOCAL_DIR: 本地缓存目录名（位于 chN/ 下）
 # TG_USER_VERSION : 目标版本号
 [env]
+TG_USER_DIR       = "../tg-rcore-tutorial-user"
 TG_USER_CRATE     = "rosist-sallina-tg-rcore-tutorial-user-t1l5"
 TG_USER_LOCAL_DIR = "tg-rcore-tutorial-user"
 TG_USER_VERSION   = "0.0.1-preview.1"

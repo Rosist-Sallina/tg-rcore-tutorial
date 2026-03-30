@@ -2,20 +2,19 @@
 
 ## 学生提交信息
 
-- crate 名称：`rosist-sallina-tg-rcore-tutorial-T1L5`
+- crate 名称：`rosist-sallina-tg-rcore-tutorial-T3L8`
 - crate 版本：`0.0.1-preview.1`
-- 依赖 crate：`rosist-sallina-tg-rcore-tutorial-syscall-t1l5`
-- 依赖 crate：`rosist-sallina-tg-rcore-tutorial-user-t1l5`
+- 依赖 crate：`rosist-sallina-tg-rcore-tutorial-syscall-t3l3 (0.0.1-preview.5)`
 - 依赖 crate：`rosist-sallina-tg-rcore-tutorial-easy-fs-t1l4`
 - 仓库地址：`https://github.com/Rosist-Sallina/tg-rcore-tutorial`
 - 仓库页面：`https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/test/tg-rcore-tutorial-ch8`
-- 建议 tag：`rosist-sallina-tg-rcore-tutorial-T1L5-v0.0.1-preview.1`
+- 建议 tag：`rosist-sallina-tg-rcore-tutorial-T3L8-v0.0.1-preview.1`
 
 复现方式：
 
 ```bash
-cargo clone rosist-sallina-tg-rcore-tutorial-T1L5
-cd rosist-sallina-tg-rcore-tutorial-T1L5
+cargo clone rosist-sallina-tg-rcore-tutorial-T3L8
+cd rosist-sallina-tg-rcore-tutorial-T3L8
 cargo run --features exercise
 ```
 

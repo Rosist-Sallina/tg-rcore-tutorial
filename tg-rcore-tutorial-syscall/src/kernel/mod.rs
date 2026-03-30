@@ -48,7 +48,10 @@ pub trait IO: Sync {
     fn input_try_getchar(&self, caller: Caller) -> isize {
         unimplemented!()
     }
-    fn open(&self, caller: Caller, path: usize, flags: usize) -> isize {
+    fn open(&self, caller: Caller, path: usize, count: usize, flags: usize) -> isize {
+        unimplemented!()
+    }
+    fn lseek(&self, caller: Caller, fd: usize, offset: isize, whence: usize) -> isize {
         unimplemented!()
     }
     fn close(&self, caller: Caller, fd: usize) -> isize {
@@ -72,6 +75,9 @@ pub trait IO: Sync {
         unimplemented!()
     }
     fn fstat(&self, caller: Caller, fd: usize, st: usize) -> isize {
+        unimplemented!()
+    }
+    fn ioctl(&self, caller: Caller, fd: usize, request: usize, argp: usize) -> isize {
         unimplemented!()
     }
     fn fb_info(&self, caller: Caller, info: usize) -> isize {
@@ -203,6 +209,21 @@ pub trait SyncMutex: Sync {
     }
 }
 
+pub trait Framebuffer: Sync {
+    fn framebuffer_init(&self, caller: Caller) -> isize {
+        unimplemented!()
+    }
+    fn framebuffer_flush(&self, caller: Caller, buf_ptr: usize, len: usize) -> isize {
+        unimplemented!()
+    }
+    fn framebuffer_info(&self, caller: Caller, info_ptr: usize) -> isize {
+        unimplemented!()
+    }
+    fn input_event(&self, caller: Caller, event_ptr: usize) -> isize {
+        unimplemented!()
+    }
+}
+
 pub trait Trace: Sync {
     fn trace(&self, caller: Caller, trace_request: usize, id: usize, data: usize) -> isize {
         unimplemented!()
@@ -217,6 +238,7 @@ static CLOCK: Container<dyn Clock> = Container::new();
 static SIGNAL: Container<dyn Signal> = Container::new();
 static THREAD: Container<dyn Thread> = Container::new();
 static SYNC_MUTEX: Container<dyn SyncMutex> = Container::new();
+static FRAMEBUFFER: Container<dyn Framebuffer> = Container::new();
 static TRACE: Container<dyn Trace> = Container::new();
 
 #[inline]
@@ -260,6 +282,11 @@ pub fn init_sync_mutex(sync_mutex: &'static dyn SyncMutex) {
 }
 
 #[inline]
+pub fn init_framebuffer(framebuffer: &'static dyn Framebuffer) {
+    FRAMEBUFFER.init(framebuffer);
+}
+
+#[inline]
 pub fn init_trace(trace: &'static dyn Trace) {
     TRACE.init(trace);
 }
@@ -277,7 +304,8 @@ pub fn handle(caller: Caller, id: SyscallId, args: [usize; 6]) -> SyscallResult 
         Id::WRITE => IO.call(id, |io| io.write(caller, args[0], args[1], args[2])),
         Id::READ => IO.call(id, |io| io.read(caller, args[0], args[1], args[2])),
         Id::INPUT_TRY_GETCHAR => IO.call(id, |io| io.input_try_getchar(caller)),
-        Id::OPENAT => IO.call(id, |io| io.open(caller, args[0], args[1])),
+        Id::OPENAT => IO.call(id, |io| io.open(caller, args[0], args[1], args[2])),
+        Id::LSEEK => IO.call(id, |io| io.lseek(caller, args[0], args[1] as isize, args[2])),
         Id::CLOSE => IO.call(id, |io| io.close(caller, args[0])),
         Id::LINKAT => IO.call(id, |io| {
             io.linkat(
@@ -293,11 +321,24 @@ pub fn handle(caller: Caller, id: SyscallId, args: [usize; 6]) -> SyscallResult 
             io.unlinkat(caller, args[0] as _, args[1], args[2] as _)
         }),
         Id::FSTAT => IO.call(id, |io| io.fstat(caller, args[0], args[1])),
+        Id::IOCTL => IO.call(id, |io| io.ioctl(caller, args[0], args[1], args[2])),
         Id::FB_INFO => IO.call(id, |io| io.fb_info(caller, args[0])),
         Id::FB_FILL_RECT => IO.call(id, |io| {
             io.fb_fill_rect(caller, args[0], args[1], args[2], args[3], args[4] as u32)
         }),
         Id::FB_PRESENT => IO.call(id, |io| io.fb_present(caller)),
+        Id::FRAMEBUFFER_INIT => {
+            FRAMEBUFFER.call(id, |framebuffer| framebuffer.framebuffer_init(caller))
+        }
+        Id::FRAMEBUFFER_FLUSH => FRAMEBUFFER.call(id, |framebuffer| {
+            framebuffer.framebuffer_flush(caller, args[0], args[1])
+        }),
+        Id::FRAMEBUFFER_INFO => FRAMEBUFFER.call(id, |framebuffer| {
+            framebuffer.framebuffer_info(caller, args[0])
+        }),
+        Id::INPUT_EVENT => {
+            FRAMEBUFFER.call(id, |framebuffer| framebuffer.input_event(caller, args[0]))
+        }
         Id::MAILBOX_CREATE => IO.call(id, |io| io.mailbox_create(caller)),
         Id::MAILBOX_SEND => IO.call(id, |io| io.mailbox_send(caller, args[0], args[1])),
         Id::MAILBOX_RECV => IO.call(id, |io| io.mailbox_recv(caller, args[0])),

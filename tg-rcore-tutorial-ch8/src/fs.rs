@@ -2,7 +2,7 @@
 //!
 //! 本模块与第七章相同，提供：
 //! - `FS`：全局文件系统实例（easy-fs 根 Inode）
-//! - `Fd`：统一文件描述符枚举（File / PipeRead / PipeWrite / Empty）
+//! - `Fd`：统一文件描述符枚举（File / PipeRead / PipeWrite / Empty / Framebuffer / Input）
 //! - `read_all`：读取文件全部内容的辅助函数
 //!
 //! 在第八章中，文件描述符表 `fd_table` 属于 `Process`（进程），
@@ -104,6 +104,10 @@ pub enum Fd {
         /// 是否可写
         write: bool,
     },
+    /// 虚拟 framebuffer 设备（`/dev/fb0`）
+    Framebuffer,
+    /// 虚拟输入设备（`/dev/input0`）
+    Input,
 }
 
 impl Fd {
@@ -114,6 +118,8 @@ impl Fd {
             Fd::PipeRead(_) => true,
             Fd::PipeWrite(_) => false,
             Fd::Empty { read, .. } => *read,
+            Fd::Framebuffer => true,
+            Fd::Input => true,
         }
     }
 
@@ -124,6 +130,8 @@ impl Fd {
             Fd::PipeRead(_) => false,
             Fd::PipeWrite(_) => true,
             Fd::Empty { write, .. } => *write,
+            Fd::Framebuffer => true,
+            Fd::Input => false,
         }
     }
 
