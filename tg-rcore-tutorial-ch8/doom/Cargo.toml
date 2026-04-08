@@ -1,0 +1,18 @@
+[package]
+name = "doom"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["stub"]
+stub = []
+real_doom = []
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+[dependencies]
+user_lib = { package = "rosist-sallina-tg-rcore-tutorial-user-t1l5", path = "../../tg-rcore-tutorial-user" }
