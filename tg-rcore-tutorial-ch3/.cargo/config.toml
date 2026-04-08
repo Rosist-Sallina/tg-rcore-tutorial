@@ -8,10 +8,11 @@ target = "riscv64gc-unknown-none-elf"
 # 等价于：qemu-system-riscv64 -machine virt -nographic -bios none -kernel <编译产物>
 [target.riscv64gc-unknown-none-elf]
 runner = [
-    "/bin/sh",
-    "-c",
-    "if [ -t 0 ]; then old=$(stty -g); trap 'stty \"$old\"' EXIT INT TERM; stty raw -echo; fi; exec qemu-system-riscv64 -machine virt -display cocoa -serial mon:stdio -global virtio-mmio.force-legacy=false -device virtio-gpu-device,bus=virtio-mmio-bus.0,xres=320,yres=240 -bios none -kernel \"$1\"",
-    "sh",
+    "qemu-system-riscv64",
+    "-machine", "virt",       # 使用 QEMU virt 虚拟平台
+    "-nographic",             # 无图形界面，输出重定向到终端
+    "-smp", "2",              # 双核机器，非 SMP 章节中副核会停在 M 态等待
+    "-kernel",                # 后接 ELF 可执行文件路径（由 cargo 自动填充）
 ]
 
 
@@ -20,6 +21,7 @@ runner = [
 # TG_USER_LOCAL_DIR: 本地缓存目录名（位于 chN/ 下）
 # TG_USER_VERSION : 目标版本号
 [env]
+TG_USER_DIR       = "../tg-rcore-tutorial-user"
 TG_USER_CRATE     = "tg-rcore-tutorial-user"
 TG_USER_LOCAL_DIR = "tg-rcore-tutorial-user"
 TG_USER_VERSION   = "0.4.8"

@@ -12,7 +12,12 @@ readme = "README.md"
 keywords = ["rcore", "sync", "mutex", "riscv"]
 categories = ["no-std", "embedded", "concurrency"]
 
+[features]
+default = []
+smp = ["tg-smp"]
+
 [dependencies]
 riscv = "0.10"
 spin = "0.9"
 tg-task-manage = { package = "tg-rcore-tutorial-task-manage", path = "../tg-rcore-tutorial-task-manage", version = "0.4.8" }
+tg-smp = { package = "rosist-sallina-tg-rcore-tutorial-smp-t2l10", path = "../tg-rcore-tutorial-smp", version = "0.0.1-preview.1", optional = true }
