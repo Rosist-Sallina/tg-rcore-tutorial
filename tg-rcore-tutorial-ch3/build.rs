@@ -42,7 +42,7 @@ fn should_skip_build_apps() -> bool {
 
 fn write_linker() {
     let ld = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("linker.ld");
-    fs::write(&ld, tg_linker::SCRIPT).unwrap_or_else(|err| {
+    fs::write(&ld, tg_linker::NOBIOS_SCRIPT).unwrap_or_else(|err| {
         panic!("failed to write linker script to {}: {}", ld.display(), err)
     });
     println!("cargo:rustc-link-arg=-T{}", ld.display());
@@ -75,7 +75,9 @@ fn build_apps() {
         panic!("failed to parse cases.toml: {err}")
     });
 
-    let case_key = if env::var("CARGO_FEATURE_EXERCISE").is_ok() {
+    let case_key = if env::var("CARGO_FEATURE_SNAKE").is_ok() {
+        "ch3_snake"
+    } else if env::var("CARGO_FEATURE_EXERCISE").is_ok() {
         "ch3_exercise"
     } else {
         "ch3"
@@ -176,9 +178,16 @@ apps:
     writeln!(asm, "    .quad app_{}_end", bins.len() - 1).unwrap();
 
     for (i, path) in bins.iter().enumerate() {
+        let modified = fs::metadata(path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
         writeln!(
             asm,
             "\
+# app_{i} source_mtime_ns = {modified}
 app_{i}_start:
     .incbin {path:?}
 app_{i}_end:",

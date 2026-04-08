@@ -29,8 +29,6 @@
 
 // 进程管理模块：定义 Process 结构体，包含地址空间和上下文
 mod process;
-#[cfg(feature = "smp")]
-mod smp;
 
 // 引入控制台输出宏（print! / println!），由 tg_console 库提供
 #[macro_use]
@@ -42,17 +40,11 @@ extern crate alloc;
 // ========== 导入 ==========
 
 use crate::{
-    impls::Sv39Manager,
+    impls::{Sv39Manager, SyscallContext},
     process::Process,
 };
-#[cfg(not(feature = "smp"))]
-use crate::impls::SyscallContext;
-use alloc::alloc::alloc;
-#[cfg(not(feature = "smp"))]
-use alloc::vec::Vec;
-use core::alloc::Layout;
-#[cfg(not(feature = "smp"))]
-use core::cell::UnsafeCell;
+use alloc::{alloc::alloc, vec::Vec};
+use core::{alloc::Layout, cell::UnsafeCell};
 use impls::Console;
 use riscv::register::*;
 // 非 RISC-V64 使用占位 Sv39 类型
@@ -60,9 +52,7 @@ use riscv::register::*;
 use stub::Sv39;
 use tg_console::log;
 // 异界传送门：解决跨地址空间上下文切换的核心组件
-#[cfg(not(feature = "smp"))]
-use tg_kernel_context::LocalContext;
-use tg_kernel_context::foreign::MultislotPortal;
+use tg_kernel_context::{LocalContext, foreign::MultislotPortal};
 // RISC-V64 使用真正的 Sv39 类型
 #[cfg(target_arch = "riscv64")]
 use tg_kernel_vm::page_table::Sv39;
@@ -71,7 +61,6 @@ use tg_kernel_vm::{
     page_table::{MmuMeta, PPN, VAddr, VPN, VmFlags, VmMeta},
 };
 use tg_sbi;
-#[cfg(not(feature = "smp"))]
 use tg_syscall::Caller;
 use xmas_elf::ElfFile;
 
@@ -115,7 +104,6 @@ unsafe extern "C" fn _start() -> ! {
     static mut STACK: [u8; STACK_SIZE] = [0u8; STACK_SIZE];
 
     core::arch::naked_asm!(
-        "mv tp, a0",
         "la sp, {stack} + {stack_size}",
         "j  {main}",
         stack = sym STACK,
@@ -135,13 +123,10 @@ const PROTAL_TRANSIT: VPN<Sv39> = VPN::MAX;
 // ========== 进程列表 ==========
 
 /// 全局进程列表（用 UnsafeCell 包装以允许内部可变性）。
-#[cfg(not(feature = "smp"))]
 struct ProcessList(UnsafeCell<Vec<Process>>);
 
-#[cfg(not(feature = "smp"))]
 unsafe impl Sync for ProcessList {}
 
-#[cfg(not(feature = "smp"))]
 impl ProcessList {
     const fn new() -> Self {
         Self(UnsafeCell::new(Vec::new()))
@@ -153,7 +138,6 @@ impl ProcessList {
 }
 
 /// 全局进程列表实例。
-#[cfg(not(feature = "smp"))]
 static PROCESSES: ProcessList = ProcessList::new();
 
 // ========== 内核主函数 ==========
@@ -183,11 +167,9 @@ extern "C" fn rust_main() -> ! {
             MEMORY - layout.len(),
         ))
     };
-    #[cfg(feature = "smp")]
-    let portal_slots = smp::NUM_CPUS;
-    #[cfg(not(feature = "smp"))]
-    let portal_slots = 1;
-    let portal_size = MultislotPortal::calculate_size(portal_slots);
+    // 第四步：分配异界传送门的物理页面
+    // 传送门大小需要适配 1 个 slot（对应 1 个并发切换）
+    let portal_size = MultislotPortal::calculate_size(1);
     let portal_layout = Layout::from_size_align(portal_size, 1 << Sv39::PAGE_BITS).unwrap();
     let portal_ptr = unsafe { alloc(portal_layout) };
     assert!(portal_layout.size() < 1 << Sv39::PAGE_BITS);
@@ -196,32 +178,15 @@ extern "C" fn rust_main() -> ! {
     let portal_idx = PROTAL_TRANSIT.index_in(Sv39::MAX_LEVEL);
     // 第六步：加载用户程序
     // 解析每个 ELF 文件，创建独立地址空间，映射传送门
-    #[cfg(not(feature = "smp"))]
     for (i, elf) in tg_linker::AppMeta::locate().iter().enumerate() {
         let base = elf.as_ptr() as usize;
         log::info!("detect app[{i}]: {base:#x}..{:#x}", base + elf.len());
         if let Some(process) = Process::new(ElfFile::new(elf).unwrap()) {
+            // 将内核传送门页表项共享到用户地址空间
+            // 这样传送门在两个地址空间的虚拟地址相同
             process.address_space.root()[portal_idx] = ks.root()[portal_idx];
             unsafe { PROCESSES.get_mut().push(process) };
         }
-    }
-    #[cfg(feature = "smp")]
-    {
-        tg_smp::hart::mark_hart_started(tg_smp::hart::hart_id());
-        let mut total = 0usize;
-        let mut procs = smp::PROCESSES.lock();
-        for (i, elf) in tg_linker::AppMeta::locate().iter().enumerate() {
-            let base = elf.as_ptr() as usize;
-            log::info!("detect app[{i}]: {base:#x}..{:#x}", base + elf.len());
-            if let Some(process) = Process::new(ElfFile::new(elf).unwrap()) {
-                process.address_space.root()[portal_idx] = ks.root()[portal_idx];
-                procs.push(process);
-                total += 1;
-            }
-        }
-        drop(procs);
-        smp::init_smp_scheduler(total);
-        smp::set_kernel_satp(satp::read().bits());
     }
 
     // 第七步：建立调度栈（映射到内核地址空间的高地址区域）
@@ -236,23 +201,11 @@ extern "C" fn rust_main() -> ! {
     );
     // 第八步：建立调度线程
     // 调度线程在独立的异常域运行，内核异常不会导致整个系统崩溃
-    #[cfg(not(feature = "smp"))]
-    let mut scheduling = {
-        let mut scheduling = LocalContext::thread(schedule as *const () as _, false);
-        *scheduling.sp_mut() = 1 << 38;
-        scheduling
-    };
-    #[cfg(feature = "smp")]
-    {
-        smp::boot_secondary();
-        smp::schedule_loop();
-    }
-    #[cfg(not(feature = "smp"))]
+    let mut scheduling = LocalContext::thread(schedule as *const () as _, false);
+    *scheduling.sp_mut() = 1 << 38;
     unsafe { scheduling.execute() };
     // 如果从 execute() 返回，说明调度线程发生了异常
-    #[cfg(not(feature = "smp"))]
     log::error!("stval = {:#x}", stval::read());
-    #[cfg(not(feature = "smp"))]
     panic!("trap from scheduling thread: {:?}", scause::read().cause());
 }
 
@@ -265,7 +218,6 @@ extern "C" fn rust_main() -> ! {
 /// 2. 取出第一个进程，通过传送门切换到其地址空间并执行
 /// 3. Trap 返回后处理系统调用或异常
 /// 4. 进程退出后从列表中移除，继续下一个
-#[cfg(not(feature = "smp"))]
 extern "C" fn schedule() -> ! {
     // 初始化异界传送门（设置传送门页面的虚拟地址和 slot 数量）
     let portal = unsafe { MultislotPortal::init_transit(PROTAL_TRANSIT.base().val(), 1) };
@@ -413,12 +365,8 @@ fn kernel_space(
 /// 与前几章不同，本章的系统调用实现需要进行**地址翻译**：
 /// 用户传入的指针是虚拟地址，内核需要通过页表将其翻译为物理地址才能访问。
 mod impls {
-    #[cfg(not(feature = "smp"))]
-    use crate::PROCESSES;
-    use crate::{Sv39, build_flags, process::Process as ProcessStruct};
+    use crate::{PROCESSES, Sv39, build_flags};
     use alloc::alloc::alloc_zeroed;
-    #[cfg(feature = "smp")]
-    use alloc::vec::Vec;
     use core::{alloc::Layout, ptr::NonNull};
     use tg_console::log;
     use tg_kernel_vm::{
@@ -426,33 +374,6 @@ mod impls {
         page_table::{MmuMeta, PPN, Pte, VAddr, VPN, VmFlags},
     };
     use tg_syscall::*;
-
-    #[cfg(feature = "smp")]
-    use tg_smp::percpu::PerCpu;
-
-    #[cfg(feature = "smp")]
-    pub static CURRENT_PROCS: PerCpu<usize> = PerCpu::new([0; tg_smp::MAX_CPUS]);
-
-    #[cfg(feature = "smp")]
-    pub fn set_current_procs(ptr: *mut Vec<ProcessStruct>) {
-        CURRENT_PROCS.set(ptr as usize);
-    }
-
-    #[cfg(feature = "smp")]
-    pub fn clear_current_procs() {
-        CURRENT_PROCS.set(0);
-    }
-
-    unsafe fn get_processes() -> &'static mut Vec<ProcessStruct> {
-        #[cfg(not(feature = "smp"))]
-        {
-            unsafe { PROCESSES.get_mut() }
-        }
-        #[cfg(feature = "smp")]
-        {
-            unsafe { &mut *(CURRENT_PROCS.get() as *mut Vec<ProcessStruct>) }
-        }
-    }
 
     /// Sv39 页表管理器：负责物理页的分配和映射。
     #[repr(transparent)]
@@ -552,7 +473,7 @@ mod impls {
                 STDOUT | STDDEBUG => {
                     // 检查用户地址是否可读
                     const READABLE: VmFlags<Sv39> = build_flags("RV");
-                    if let Some(ptr) = unsafe { get_processes() }
+                    if let Some(ptr) = unsafe { PROCESSES.get_mut() }
                         .get_mut(caller.entity)
                         .unwrap()
                         .address_space
@@ -590,7 +511,7 @@ mod impls {
         /// 这是本章新增的系统调用，允许用户程序动态扩展/收缩堆内存。
         /// 返回旧的 break 地址，失败返回 -1。
         fn sbrk(&self, caller: Caller, size: i32) -> isize {
-            if let Some(process) = unsafe { get_processes() }.get_mut(caller.entity) {
+            if let Some(process) = unsafe { PROCESSES.get_mut() }.get_mut(caller.entity) {
                 if let Some(old_brk) = process.change_program_brk(size as isize) {
                     old_brk as isize
                 } else {
@@ -621,7 +542,7 @@ mod impls {
             const WRITABLE: VmFlags<Sv39> = build_flags("W_V");
             match clock_id {
                 ClockId::CLOCK_MONOTONIC => {
-                    if let Some(mut ptr) = unsafe { get_processes() }
+                    if let Some(mut ptr) = unsafe { PROCESSES.get_mut() }
                         .get_mut(caller.entity)
                         .unwrap()
                         .address_space
@@ -655,7 +576,7 @@ mod impls {
             const USER_READABLE: VmFlags<Sv39> = build_flags("U_RV");
             const USER_WRITABLE: VmFlags<Sv39> = build_flags("U_WV");
 
-            let Some(process) = unsafe { get_processes() }.get_mut(caller.entity) else {
+            let Some(process) = unsafe { PROCESSES.get_mut() }.get_mut(caller.entity) else {
                 return -1;
             };
 
@@ -697,7 +618,7 @@ mod impls {
             _fd: i32,
             _offset: usize,
         ) -> isize {
-            unsafe { get_processes() }
+            unsafe { PROCESSES.get_mut() }
                 .get_mut(caller.entity)
                 .and_then(|process| process.mmap_anonymous(addr, len, prot))
                 .map(|()| 0)
@@ -705,7 +626,7 @@ mod impls {
         }
 
         fn munmap(&self, caller: Caller, addr: usize, len: usize) -> isize {
-            unsafe { get_processes() }
+            unsafe { PROCESSES.get_mut() }
                 .get_mut(caller.entity)
                 .and_then(|process| process.munmap_anonymous(addr, len))
                 .map(|()| 0)

@@ -40,8 +40,6 @@ pub struct TaskControlBlock {
     stack: [usize; 1024],
 }
 
-unsafe impl Send for TaskControlBlock {}
-
 /// 调度事件
 ///
 /// `handle_syscall` 处理完系统调用后返回此枚举，

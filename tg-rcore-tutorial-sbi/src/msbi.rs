@@ -5,18 +5,13 @@
 //! - 控制台 I/O（UART）
 //! - 定时器管理
 //! - 系统重置
-//! - 最小 HSM（副核启动）
-//! - 最小 sPI（仅返回成功，配合 S 态轮询）
 //!
 //! 设计定位：这是“够用即可”的教学最小实现，
 //! 只覆盖 ch1~ch8 需要的 SBI 功能，不追求完整 SBI 规范实现。
 
 use core::arch::asm;
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 const UART_BASE: usize = 0x1000_0000;
-const MAX_HARTS: usize = 2;
-const CLINT_MSIP: usize = 0x0200_0000;
 // 说明：该地址是 QEMU virt 机器常用 UART MMIO 基址。
 // 本实现假定运行环境与教学配置一致（单核 + QEMU virt）。
 
@@ -69,9 +64,7 @@ mod eid {
     pub const CONSOLE_GETCHAR: usize = 0x02;
     pub const SHUTDOWN: usize = 0x08;
     pub const BASE: usize = 0x10;
-    pub const HSM: usize = 0x48534D;
     pub const SRST: usize = 0x53525354;
-    pub const SPI: usize = 0x735049;
     pub const TIMER: usize = 0x54494D45;
 }
 
@@ -85,12 +78,6 @@ mod fid {
     pub const BASE_GET_MARCHID: usize = 5;
     pub const BASE_GET_MIMPID: usize = 6;
 
-    pub const HSM_HART_START: usize = 0;
-    #[allow(dead_code)]
-    pub const HSM_HART_STOP: usize = 1;
-    #[allow(dead_code)]
-    pub const HSM_HART_GET_STATUS: usize = 2;
-
     pub const SRST_SHUTDOWN: usize = 0;
     #[allow(dead_code)]
     pub const SRST_COLD_REBOOT: usize = 1;
@@ -101,9 +88,7 @@ mod fid {
 /// SBI 错误码。
 mod error {
     pub const SUCCESS: isize = 0;
-    pub const ERR_INVALID_PARAM: isize = -3;
     pub const ERR_NOT_SUPPORTED: isize = -2;
-    pub const ERR_ALREADY_AVAILABLE: isize = -6;
 }
 
 /// SBI 返回值。
@@ -129,39 +114,7 @@ impl SbiRet {
             value: 0,
         }
     }
-
-    fn invalid_param() -> Self {
-        SbiRet {
-            error: error::ERR_INVALID_PARAM,
-            value: 0,
-        }
-    }
-
-    fn already_available() -> Self {
-        SbiRet {
-            error: error::ERR_ALREADY_AVAILABLE,
-            value: 0,
-        }
-    }
 }
-
-const HART_STOPPED: usize = 0;
-const HART_START_PENDING: usize = 1;
-
-/// 由 M 态启动代码和 HSM 处理函数共享的启动状态。
-#[unsafe(no_mangle)]
-pub static MSBI_HART_STATE: [AtomicUsize; MAX_HARTS] =
-    [AtomicUsize::new(HART_STOPPED), AtomicUsize::new(HART_STOPPED)];
-
-/// 由 hart_start 写入的副核入口地址。
-#[unsafe(no_mangle)]
-pub static MSBI_HART_START_ADDR: [AtomicUsize; MAX_HARTS] =
-    [AtomicUsize::new(0), AtomicUsize::new(0)];
-
-/// 由 hart_start 写入的 opaque 参数。
-#[unsafe(no_mangle)]
-pub static MSBI_HART_OPAQUE: [AtomicUsize; MAX_HARTS] =
-    [AtomicUsize::new(0), AtomicUsize::new(0)];
 
 /// 处理 Legacy 控制台 putchar（EID 0x01）。
 fn handle_console_putchar(c: usize) -> SbiRet {
@@ -227,48 +180,14 @@ fn handle_system_reset(fid: usize) -> SbiRet {
     loop {}
 }
 
-fn handle_hart_start(hartid: usize, start_addr: usize, opaque: usize) -> SbiRet {
-    if hartid == 0 || hartid >= MAX_HARTS || start_addr == 0 {
-        return SbiRet::invalid_param();
-    }
-    if MSBI_HART_STATE[hartid]
-        .compare_exchange(
-            HART_STOPPED,
-            HART_START_PENDING,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        )
-        .is_err()
-    {
-        return SbiRet::already_available();
-    }
-    MSBI_HART_START_ADDR[hartid].store(start_addr, Ordering::Release);
-    MSBI_HART_OPAQUE[hartid].store(opaque, Ordering::Release);
-    unsafe {
-        ((CLINT_MSIP + hartid * 4) as *mut u32).write_volatile(1);
-    }
-    SbiRet::success(0)
-}
-
-fn handle_hsm(fid: usize, hartid: usize, start_addr: usize, opaque: usize) -> SbiRet {
-    match fid {
-        fid::HSM_HART_START => handle_hart_start(hartid, start_addr, opaque),
-        _ => SbiRet::not_supported(),
-    }
-}
-
-fn handle_spi(_hart_mask: usize, _hart_mask_base: usize) -> SbiRet {
-    // 本教学实现不依赖真正的硬件 IPI 送达。
-    // S 态会先更新共享的 pending 位，再把远端处理动作留给下一个调度点轮询。
-    SbiRet::success(0)
-}
-
 /// 处理 SBI Base 扩展调用。
 fn handle_base(fid: usize) -> SbiRet {
     match fid {
         fid::BASE_GET_SBI_VERSION => SbiRet::success(0x01000000), // SBI v1.0.0
         fid::BASE_GET_IMPL_ID => SbiRet::success(0xFFFF),         // Custom implementation
         fid::BASE_GET_IMPL_VERSION => SbiRet::success(1),
+        // 教学简化：统一返回 1，表示“支持该扩展”。
+        // 在完整实现中应按 eid 逐项判断。
         fid::BASE_PROBE_EXTENSION => SbiRet::success(1),
         fid::BASE_GET_MVENDORID => SbiRet::success(0),
         fid::BASE_GET_MARCHID => SbiRet::success(0),
@@ -293,8 +212,8 @@ fn handle_base(fid: usize) -> SbiRet {
 #[unsafe(no_mangle)]
 pub fn m_trap_handler(
     a0: usize,
-    a1: usize,
-    a2: usize,
+    _a1: usize,
+    _a2: usize,
     _a3: usize,
     _a4: usize,
     _a5: usize,
@@ -322,9 +241,7 @@ pub fn m_trap_handler(
         eid::TIMER => handle_timer(a0 as u64),
         eid::SHUTDOWN => handle_system_reset(fid::SRST_SHUTDOWN),
         eid::BASE => handle_base(fid),
-        eid::HSM => handle_hsm(fid, a0, a1, a2),
         eid::SRST => handle_system_reset(fid),
-        eid::SPI => handle_spi(a0, a1),
         _ => SbiRet::not_supported(),
     }
 }

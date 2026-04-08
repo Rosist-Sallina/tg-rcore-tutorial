@@ -1,15 +1,15 @@
 [package]
-name = "rosist-sallina-tg-rcore-tutorial-sbi-t2l10"
-description = "Student AI4OSE support crate for T2L10: SBI wrappers and boot helpers for SMP-enabled tg-rcore-tutorial chapters."
-version = "0.0.1-preview.1"
+name = "tg-rcore-tutorial-sbi"
+description = "SBI (Supervisor Binary Interface) call wrappers for rCore tutorial OS."
+version = "0.4.8"
 edition = "2024"
-authors = ["Rosist_Sallina <sallinarosist@gmail.com>"]
-repository = "https://github.com/Rosist-Sallina/tg-rcore-tutorial"
-homepage = "https://github.com/Rosist-Sallina/tg-rcore-tutorial/tree/t2l10-redo/tg-rcore-tutorial-sbi"
-documentation = "https://docs.rs/rosist-sallina-tg-rcore-tutorial-sbi-t2l10"
+authors = ["Ivans-11 <w-yf22@mails.tsinghua.edu.cn>"]
+repository = "https://github.com/rcore-os/tg-rcore-tutorial-sbi"
+homepage = "https://github.com/rcore-os/tg-rcore-tutorial-sbi/tree/test"
+documentation = "https://docs.rs/tg-rcore-tutorial-sbi"
 license = "GPL-3.0"
 readme = "README.md"
-keywords = ["ai", "ai4ose", "kernel", "learning", "os"]
+keywords = ["rcore", "sbi", "no-std", "riscv"]
 categories = ["no-std", "embedded"]
 
 [features]
